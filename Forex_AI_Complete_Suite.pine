@@ -344,9 +344,9 @@ prev_l_liq = ta.lowest(low,   liq_len)[1]
 bsl_swept = high > prev_h_liq and close < prev_h_liq and u_wick > body_sz * 0.5
 ssl_swept = low  < prev_l_liq and close > prev_l_liq and l_wick > body_sz * 0.5
 
-// EQH / EQL lines
-is_eqh = math.abs(high - high[liq_len]) / high < 0.002 and high == ta.highest(high, liq_len)
-is_eql = math.abs(low  - low[liq_len])  / low  < 0.002 and low  == ta.lowest(low,  liq_len)
+// EQH / EQL lines  (ta.highestbars/lowestbars == 0 avoids float == float comparison)
+is_eqh = math.abs(high - high[liq_len]) / high < 0.002 and ta.highestbars(high, liq_len) == 0
+is_eql = math.abs(low  - low[liq_len])  / low  < 0.002 and ta.lowestbars(low,  liq_len) == 0
 
 if show_liq
     if is_eqh
@@ -399,11 +399,11 @@ active_sess  = in_overlap   ? "London/NY Overlap" :
 
 best_sess    = in_lon_kz or in_ny_kz
 
-if show_kz
-    bgcolor(in_asia_kz   ? color.new(c_asia, 93) : na, title="Asia KZ")
-    bgcolor(in_lon_kz    ? color.new(c_lon,  93) : na, title="London KZ")
-    bgcolor(in_overlap   ? color.new(#1b5e20, 91): na, title="Overlap")
-    bgcolor(in_lon_close ? color.new(#00695c, 93): na, title="Lon Close")
+// bgcolor() must be at global scope in v6 — fold show_kz into the condition
+bgcolor(show_kz and in_asia_kz   ? color.new(c_asia,    93) : na, title="Asia KZ")
+bgcolor(show_kz and in_lon_kz    ? color.new(c_lon,     93) : na, title="London KZ")
+bgcolor(show_kz and in_overlap   ? color.new(#1b5e20,   91) : na, title="Overlap")
+bgcolor(show_kz and in_lon_close ? color.new(#00695c,   93) : na, title="Lon Close")
 
 // Power of 3 labels
 if t_mn == 1200
@@ -540,9 +540,9 @@ if show_trade and short_fire and barstate.islast
 // ══════════════════════════════════════════════════════════════════════════════
 //  MODULE 13 — AI THINKING PANEL
 // ══════════════════════════════════════════════════════════════════════════════
-t_pos = panel_pos == "Top Right"    ? position.top_right    :
-        panel_pos == "Top Left"     ? position.top_left     :
-        panel_pos == "Bottom Right" ? position.bottom_right : position.bottom_left
+var string t_pos = panel_pos == "Top Right"    ? position.top_right    :
+                   panel_pos == "Top Left"     ? position.top_left     :
+                   panel_pos == "Bottom Right" ? position.bottom_right : position.bottom_left
 
 var table P = table.new(t_pos, 3, 42,
      bgcolor=color.new(#0d1117, 5),
