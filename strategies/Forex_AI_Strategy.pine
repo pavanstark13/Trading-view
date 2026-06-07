@@ -1,0 +1,303 @@
+// This source code is subject to the terms of the Mozilla Public License 2.0
+// © Forex_AI_Strategy — Full autonomous forex strategy built on AI assistant logic
+//@version=5
+strategy("Forex AI Strategy", overlay=true,
+         default_qty_type=strategy.percent_of_equity,
+         default_qty_value=2, initial_capital=10000,
+         commission_type=strategy.commission.percent,
+         commission_value=0.007, slippage=1,
+         max_boxes_count=200, max_lines_count=200)
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  SETTINGS
+// ══════════════════════════════════════════════════════════════════════════════
+// Entry
+swing_len    = input.int(10,   "Swing Detection",        group="Structure")
+min_score    = input.int(5,    "Min AI Score (1–10)",    group="Structure",    minval=1, maxval=10)
+
+// Sessions
+use_session  = input.bool(true,"Session Filter",         group="Sessions")
+tz           = input.string("America/New_York","TZ",     group="Sessions",
+               options=["America/New_York","Europe/London","UTC"])
+trade_london = input.bool(true,"London KZ (2–5am NY)",   group="Sessions")
+trade_ny     = input.bool(true,"NY KZ (7–10am NY)",      group="Sessions")
+
+// Risk
+sl_mode      = input.string("ATR","Stop Loss Mode",      group="Risk",
+               options=["ATR","Structure","Fixed Pips"])
+sl_atr       = input.float(1.5,"SL ATR Multiplier",      group="Risk", step=0.25)
+tp1_rr       = input.float(1.5,"TP1 R:R",               group="Risk", step=0.25)
+tp2_rr       = input.float(3.0,"TP2 R:R",               group="Risk", step=0.25)
+use_trail    = input.bool(false,"Trailing Stop",          group="Risk")
+trail_atr    = input.float(1.0,"Trail ATR",              group="Risk")
+
+// Filters
+ema_trend    = input.bool(true,"EMA 200 Filter",         group="Filters")
+htf_filter   = input.bool(true,"4H Trend Filter",        group="Filters")
+vol_filter   = input.bool(true,"Volume Filter",          group="Filters")
+rsi_filter   = input.bool(true,"RSI Extreme Filter",     group="Filters")
+liq_sweep    = input.bool(true,"Require Liquidity Sweep",group="Filters")
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  CORE CALCULATIONS
+// ══════════════════════════════════════════════════════════════════════════════
+atr     = ta.atr(14)
+atr_avg = ta.sma(atr, 50)
+rsi     = ta.rsi(close, 14)
+vol_avg = ta.sma(volume, 20)
+
+ema20   = ta.ema(close, 20)
+ema50   = ta.ema(close, 50)
+ema200  = ta.ema(close, 200)
+vwap_v  = ta.vwap(hlc3)
+
+[macd_l, sig_l, _] = ta.macd(close, 12, 26, 9)
+k_raw   = ta.stoch(close, high, low, 14)
+k_line  = ta.sma(k_raw, 3)
+d_line  = ta.sma(k_line, 3)
+
+[dmi_plus, dmi_minus, adx_val] = ta.dmi(14, 14)
+
+// HTF
+htf_ema20 = request.security(syminfo.tickerid, "240", ta.ema(close, 20))
+htf_ema50 = request.security(syminfo.tickerid, "240", ta.ema(close, 50))
+htf_close = request.security(syminfo.tickerid, "240", close)
+
+htf_bull = htf_ema20 > htf_ema50 and htf_close > htf_ema50
+htf_bear = htf_ema20 < htf_ema50 and htf_close < htf_ema50
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  MARKET STRUCTURE
+// ══════════════════════════════════════════════════════════════════════════════
+ph = ta.pivothigh(high, swing_len, swing_len)
+pl = ta.pivotlow(low,   swing_len, swing_len)
+
+var float last_ph = na
+var float last_pl = na
+var bool  bull_ms = true
+
+if not na(ph) then last_ph := ph
+if not na(pl) then last_pl := pl
+
+bull_bos = not na(last_ph) and close > last_ph and close[1] <= last_ph
+bear_bos = not na(last_pl) and close < last_pl and close[1] >= last_pl
+
+if bull_bos then bull_ms := true
+if bear_bos then bull_ms := false
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  LIQUIDITY SWEEPS
+// ══════════════════════════════════════════════════════════════════════════════
+body   = math.abs(close - open)
+u_wick = high  - math.max(open, close)
+l_wick = math.min(open, close) - low
+
+prev_h20 = ta.highest(high, 20)[1]
+prev_l20 = ta.lowest(low,   20)[1]
+
+bsl_swept = high > prev_h20 and close < prev_h20 and u_wick > body * 0.5
+ssl_swept = low  < prev_l20 and close > prev_l20 and l_wick > body * 0.5
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  ORDER BLOCK
+// ══════════════════════════════════════════════════════════════════════════════
+bull_impulse = close > close[1] and close[1] > close[2]
+bear_impulse = close < close[1] and close[1] < close[2]
+
+var float bull_ob_hi = na
+var float bull_ob_lo = na
+var float bear_ob_hi = na
+var float bear_ob_lo = na
+
+if bull_impulse
+    for i = 1 to 5
+        if close[i] < open[i]
+            bull_ob_hi := high[i]
+            bull_ob_lo := low[i]
+            break
+
+if bear_impulse
+    for i = 1 to 5
+        if close[i] > open[i]
+            bear_ob_hi := high[i]
+            bear_ob_lo := low[i]
+            break
+
+in_bull_ob = not na(bull_ob_lo) and close >= bull_ob_lo and close <= bull_ob_hi
+in_bear_ob = not na(bear_ob_hi) and close >= bear_ob_lo and close <= bear_ob_hi
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  FVG
+// ══════════════════════════════════════════════════════════════════════════════
+bull_fvg = low > high[2]
+bear_fvg = high < low[2]
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  SESSION
+// ══════════════════════════════════════════════════════════════════════════════
+h_t = hour(time, tz)
+m_t = minute(time, tz)
+t_m = h_t * 60 + m_t
+
+in_lon_kz = t_m >= 120 and t_m < 300
+in_ny_kz  = t_m >= 420 and t_m < 600
+
+sess_ok = not use_session or
+          (trade_london and in_lon_kz) or
+          (trade_ny     and in_ny_kz)
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  AI CONFLUENCE SCORE
+// ══════════════════════════════════════════════════════════════════════════════
+l_sc = 0
+l_sc += (bull_ms                       ? 1 : 0)
+l_sc += (htf_bull                      ? 2 : 0)  // HTF weighted
+l_sc += (bull_bos                      ? 1 : 0)
+l_sc += (ssl_swept                     ? 1 : 0)
+l_sc += (rsi > 50 and rsi < 70        ? 1 : 0)
+l_sc += (macd_l > sig_l               ? 1 : 0)
+l_sc += (k_line > d_line              ? 1 : 0)
+l_sc += (close > vwap_v               ? 1 : 0)
+l_sc += (volume > vol_avg * 1.2       ? 1 : 0)
+l_sc += (adx_val > 20 and dmi_plus > dmi_minus ? 1 : 0)
+
+s_sc = 0
+s_sc += (not bull_ms                   ? 1 : 0)
+s_sc += (htf_bear                      ? 2 : 0)
+s_sc += (bear_bos                      ? 1 : 0)
+s_sc += (bsl_swept                     ? 1 : 0)
+s_sc += (rsi < 50 and rsi > 30        ? 1 : 0)
+s_sc += (macd_l < sig_l               ? 1 : 0)
+s_sc += (k_line < d_line              ? 1 : 0)
+s_sc += (close < vwap_v               ? 1 : 0)
+s_sc += (volume > vol_avg * 1.2       ? 1 : 0)
+s_sc += (adx_val > 20 and dmi_minus > dmi_plus ? 1 : 0)
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  ENTRY CONDITIONS (ALL FILTERS GATED)
+// ══════════════════════════════════════════════════════════════════════════════
+long_ok  = l_sc >= min_score
+long_ok  := long_ok and (not liq_sweep  or ssl_swept)
+long_ok  := long_ok and (not ema_trend  or close > ema200)
+long_ok  := long_ok and (not htf_filter or htf_bull)
+long_ok  := long_ok and (not vol_filter or volume > vol_avg)
+long_ok  := long_ok and (not rsi_filter or rsi < 75)
+long_ok  := long_ok and sess_ok
+long_ok  := long_ok and strategy.position_size == 0
+
+short_ok  = s_sc >= min_score
+short_ok  := short_ok and (not liq_sweep  or bsl_swept)
+short_ok  := short_ok and (not ema_trend  or close < ema200)
+short_ok  := short_ok and (not htf_filter or htf_bear)
+short_ok  := short_ok and (not vol_filter or volume > vol_avg)
+short_ok  := short_ok and (not rsi_filter or rsi > 25)
+short_ok  := short_ok and sess_ok
+short_ok  := short_ok and strategy.position_size == 0
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  STOP LOSS CALCULATION
+// ══════════════════════════════════════════════════════════════════════════════
+long_sl_p = sl_mode == "ATR"       ? close - atr * sl_atr :
+            sl_mode == "Structure" ? (not na(last_pl) ? last_pl - atr * 0.3 : close - atr * sl_atr) :
+            close - atr * sl_atr
+
+short_sl_p = sl_mode == "ATR"       ? close + atr * sl_atr :
+             sl_mode == "Structure" ? (not na(last_ph) ? last_ph + atr * 0.3 : close + atr * sl_atr) :
+             close + atr * sl_atr
+
+long_risk   = close - long_sl_p
+short_risk  = short_sl_p - close
+
+long_tp1_p  = close + long_risk   * tp1_rr
+long_tp2_p  = close + long_risk   * tp2_rr
+short_tp1_p = close - short_risk  * tp1_rr
+short_tp2_p = close - short_risk  * tp2_rr
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  ENTRIES
+// ══════════════════════════════════════════════════════════════════════════════
+if long_ok
+    strategy.entry("Long",  strategy.long, comment="AI Long  " + str.tostring(l_sc) + "/10")
+    strategy.exit("L-TP1", "Long", qty_percent=50, limit=long_tp1_p, stop=long_sl_p,
+         comment="TP1")
+    strategy.exit("L-TP2", "Long", qty_percent=50, limit=long_tp2_p, stop=long_sl_p,
+         comment="TP2",
+         trail_offset=use_trail ? atr * trail_atr / syminfo.mintick : na)
+
+if short_ok
+    strategy.entry("Short", strategy.short, comment="AI Short " + str.tostring(s_sc) + "/10")
+    strategy.exit("S-TP1", "Short", qty_percent=50, limit=short_tp1_p, stop=short_sl_p,
+         comment="TP1")
+    strategy.exit("S-TP2", "Short", qty_percent=50, limit=short_tp2_p, stop=short_sl_p,
+         comment="TP2",
+         trail_offset=use_trail ? atr * trail_atr / syminfo.mintick : na)
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  VISUAL OVERLAYS
+// ══════════════════════════════════════════════════════════════════════════════
+plot(ema20,  "EMA 20",  color=color.new(#00e5ff, 40), linewidth=1)
+plot(ema50,  "EMA 50",  color=color.new(#ffd600, 40), linewidth=1)
+plot(ema200, "EMA 200", color=color.new(#ff6d00, 30), linewidth=2)
+plot(vwap_v, "VWAP",    color=color.new(#7b1fa2, 40), linewidth=2)
+
+plotshape(long_ok,  "Long",  shape.triangleup,   location.belowbar, color=color.new(#00c853,0), size=size.normal)
+plotshape(short_ok, "Short", shape.triangledown,  location.abovebar, color=color.new(#ff1744,0), size=size.normal)
+
+bgcolor(in_lon_kz ? color.new(#1565c0, 95) : na, title="London KZ")
+bgcolor(in_ny_kz  ? color.new(#e65100, 95) : na, title="NY KZ")
+
+// Trade boxes
+if long_ok
+    box.new(bar_index, long_sl_p, bar_index + 50, long_tp2_p,
+         bgcolor=color.new(#00c853, 93), border_color=color.new(#00c853, 50))
+
+if short_ok
+    box.new(bar_index, short_tp2_p, bar_index + 50, short_sl_p,
+         bgcolor=color.new(#ff1744, 93), border_color=color.new(#ff1744, 50))
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  PERFORMANCE TABLE
+// ══════════════════════════════════════════════════════════════════════════════
+var table perf = table.new(position.bottom_right, 2, 8,
+     bgcolor=color.new(#0d1117, 5),
+     border_color=color.new(#30363d, 0), border_width=1,
+     frame_color=color.new(#58a6ff, 40), frame_width=2)
+
+if barstate.islast
+    net_pnl    = strategy.netprofit
+    win_rate   = strategy.wintrades / math.max(strategy.closedtrades, 1) * 100
+    pf         = strategy.grossprofit / math.max(math.abs(strategy.grossloss), 1)
+    avg_win    = strategy.grossprofit  / math.max(strategy.wintrades,  1)
+    avg_loss   = strategy.grossloss    / math.max(strategy.losstrades, 1)
+    exp        = (win_rate / 100) * avg_win + (1 - win_rate / 100) * avg_loss
+
+    pnl_c  = net_pnl >= 0 ? color.new(#00c853, 0) : color.new(#ff1744, 0)
+    pf_c   = pf >= 1.5    ? color.new(#00c853, 0) :
+             pf >= 1.0    ? color.new(#ffd600, 0) : color.new(#ff1744, 0)
+    wr_c   = win_rate >= 50 ? color.new(#00c853, 0) : color.new(#ff1744, 0)
+
+    table.cell(perf, 0, 0, "Strategy Stats",   text_color=color.new(#58a6ff,0), text_size=size.small,
+         bgcolor=color.new(#0d1117,0))
+    table.merge_cells(perf, 0, 0, 1, 0)
+
+    rows_s = array.from("Net P&L","Win Rate","Profit Factor","Trades","Avg Win","Avg Loss")
+    rows_v = array.from(
+         "$" + str.tostring(math.round(net_pnl, 2)),
+         str.tostring(math.round(win_rate, 1)) + "%",
+         str.tostring(math.round(pf, 2)),
+         str.tostring(strategy.closedtrades),
+         "$" + str.tostring(math.round(avg_win, 2)),
+         "$" + str.tostring(math.round(avg_loss, 2)))
+    rows_c = array.from(pnl_c, wr_c, pf_c,
+         color.new(#ffffff, 0), color.new(#00c853, 0), color.new(#ff1744, 0))
+
+    for i = 0 to array.size(rows_s) - 1
+        row_bg = i % 2 == 0 ? color.new(#161b22, 20) : color.new(#1c2128, 20)
+        table.cell(perf, 0, i + 1, "  " + array.get(rows_s, i),
+             text_color=color.new(#8b949e, 0), text_size=size.tiny, bgcolor=row_bg, text_halign=text.align_left)
+        table.cell(perf, 1, i + 1, array.get(rows_v, i),
+             text_color=array.get(rows_c, i), text_size=size.small, bgcolor=row_bg)
+
+// Alerts
+alertcondition(long_ok,  "AI Forex Long",  "Forex AI Strategy — LONG entry. Score " + str.tostring(l_sc) + "/10")
+alertcondition(short_ok, "AI Forex Short", "Forex AI Strategy — SHORT entry. Score " + str.tostring(s_sc) + "/10")

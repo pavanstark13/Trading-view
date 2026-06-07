@@ -1,0 +1,247 @@
+// This source code is subject to the terms of the Mozilla Public License 2.0
+// © Currency_Strength_Meter — Real-time 8-currency relative strength
+//@version=5
+indicator("Currency Strength Meter", overlay=false, max_bars_back=500)
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  INPUTS
+// ══════════════════════════════════════════════════════════════════════════════
+len          = input.int(14, "Smoothing Length", minval=2)
+show_table   = input.bool(true, "Show Strength Table")
+show_lines   = input.bool(true, "Show Strength Lines")
+strong_thr   = input.float(60.0, "Strong Threshold")
+weak_thr     = input.float(40.0, "Weak Threshold")
+tf_override  = input.string("", "Timeframe (blank = current)",
+               tooltip="e.g. 60, 240, D. Leave blank for current chart TF.")
+
+tf = tf_override == "" ? timeframe.period : tf_override
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  CURRENCY CALCULATION
+//  Each currency strength = average % change across all its pairs
+// ══════════════════════════════════════════════════════════════════════════════
+roc(src, n) => (src - src[n]) / src[n] * 100.0
+
+// Pull close prices for 28 major pairs
+eurusd = request.security("FX:EURUSD", tf, close)
+gbpusd = request.security("FX:GBPUSD", tf, close)
+audusd = request.security("FX:AUDUSD", tf, close)
+nzdusd = request.security("FX:NZDUSD", tf, close)
+usdjpy = request.security("FX:USDJPY", tf, close)
+usdchf = request.security("FX:USDCHF", tf, close)
+usdcad = request.security("FX:USDCAD", tf, close)
+eurgbp = request.security("FX:EURGBP", tf, close)
+eurjpy = request.security("FX:EURJPY", tf, close)
+eurchf = request.security("FX:EURCHF", tf, close)
+euraud = request.security("FX:EURAUD", tf, close)
+eurcad = request.security("FX:EURCAD", tf, close)
+eurnzd = request.security("FX:EURNZD", tf, close)
+gbpjpy = request.security("FX:GBPJPY", tf, close)
+gbpchf = request.security("FX:GBPCHF", tf, close)
+gbpaud = request.security("FX:GBPAUD", tf, close)
+gbpcad = request.security("FX:GBPCAD", tf, close)
+gbpnzd = request.security("FX:GBPNZD", tf, close)
+audjpy = request.security("FX:AUDJPY", tf, close)
+audchf = request.security("FX:AUDCHF", tf, close)
+audcad = request.security("FX:AUDCAD", tf, close)
+audnzd = request.security("FX:AUDNZD", tf, close)
+nzdjpy = request.security("FX:NZDJPY", tf, close)
+nzdchf = request.security("FX:NZDCHF", tf, close)
+nzdcad = request.security("FX:NZDCAD", tf, close)
+cadjpy = request.security("FX:CADJPY", tf, close)
+cadchf = request.security("FX:CADCHF", tf, close)
+chfjpy = request.security("FX:CHFJPY", tf, close)
+
+// Rate of change per pair
+r_eurusd = roc(eurusd, len)
+r_gbpusd = roc(gbpusd, len)
+r_audusd = roc(audusd, len)
+r_nzdusd = roc(nzdusd, len)
+r_usdjpy = roc(usdjpy, len)
+r_usdchf = roc(usdchf, len)
+r_usdcad = roc(usdcad, len)
+r_eurgbp = roc(eurgbp, len)
+r_eurjpy = roc(eurjpy, len)
+r_eurchf = roc(eurchf, len)
+r_euraud = roc(euraud, len)
+r_eurcad = roc(eurcad, len)
+r_eurnzd = roc(eurnzd, len)
+r_gbpjpy = roc(gbpjpy, len)
+r_gbpchf = roc(gbpchf, len)
+r_gbpaud = roc(gbpaud, len)
+r_gbpcad = roc(gbpcad, len)
+r_gbpnzd = roc(gbpnzd, len)
+r_audjpy = roc(audjpy, len)
+r_audchf = roc(audchf, len)
+r_audcad = roc(audcad, len)
+r_audnzd = roc(audnzd, len)
+r_nzdjpy = roc(nzdjpy, len)
+r_nzdchf = roc(nzdchf, len)
+r_nzdcad = roc(nzdcad, len)
+r_cadjpy = roc(cadjpy, len)
+r_cadchf = roc(cadchf, len)
+r_chfjpy = roc(chfjpy, len)
+
+// Composite strength per currency (positive pairs contribute +, quoted pairs contribute -)
+usd_raw = ( r_eurusd * -1 + r_gbpusd * -1 + r_audusd * -1 + r_nzdusd * -1 +
+            r_usdjpy +  r_usdchf + r_usdcad) / 7.0
+
+eur_raw = ( r_eurusd + r_eurgbp + r_eurjpy + r_eurchf + r_euraud + r_eurcad + r_eurnzd) / 7.0
+
+gbp_raw = ( r_gbpusd + r_gbpjpy + r_gbpchf + r_gbpaud + r_gbpcad + r_gbpnzd +
+            r_eurgbp * -1) / 7.0
+
+jpy_raw = ( r_usdjpy * -1 + r_eurjpy * -1 + r_gbpjpy * -1 + r_audjpy * -1 +
+            r_nzdjpy * -1 + r_cadjpy * -1 + r_chfjpy * -1) / 7.0
+
+chf_raw = ( r_usdchf * -1 + r_eurchf * -1 + r_gbpchf * -1 + r_audchf * -1 +
+            r_nzdchf * -1 + r_cadchf * -1 + r_chfjpy) / 7.0
+
+aud_raw = ( r_audusd + r_audjpy + r_audchf + r_audcad + r_audnzd +
+            r_euraud * -1 + r_gbpaud * -1) / 7.0
+
+nzd_raw = ( r_nzdusd + r_nzdjpy + r_nzdchf + r_nzdcad +
+            r_audnzd * -1 + r_eurnzd * -1 + r_gbpnzd * -1) / 7.0
+
+cad_raw = ( r_usdcad * -1 + r_eurcad * -1 + r_gbpcad * -1 + r_audcad * -1 +
+            r_nzdcad * -1 + r_cadjpy + r_cadchf) / 7.0
+
+// Smooth
+usd_s = ta.ema(usd_raw, 3)
+eur_s = ta.ema(eur_raw, 3)
+gbp_s = ta.ema(gbp_raw, 3)
+jpy_s = ta.ema(jpy_raw, 3)
+chf_s = ta.ema(chf_raw, 3)
+aud_s = ta.ema(aud_raw, 3)
+nzd_s = ta.ema(nzd_raw, 3)
+cad_s = ta.ema(cad_raw, 3)
+
+// Normalize 0–100
+norm(v) =>
+    highest = ta.highest(v, 100)
+    lowest  = ta.lowest(v,  100)
+    rng     = highest - lowest
+    rng > 0 ? (v - lowest) / rng * 100.0 : 50.0
+
+usd_n = norm(usd_s)
+eur_n = norm(eur_s)
+gbp_n = norm(gbp_s)
+jpy_n = norm(jpy_s)
+chf_n = norm(chf_s)
+aud_n = norm(aud_s)
+nzd_n = norm(nzd_s)
+cad_n = norm(cad_s)
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  PLOTS
+// ══════════════════════════════════════════════════════════════════════════════
+h_strong = hline(strong_thr, "Strong",  color=color.new(#00c853, 60), linestyle=hline.style_dashed)
+h_weak   = hline(weak_thr,   "Weak",    color=color.new(#ff1744, 60), linestyle=hline.style_dashed)
+h_mid    = hline(50,         "Neutral", color=color.new(#ffffff, 80), linestyle=hline.style_dotted)
+
+p_usd = plot(show_lines ? usd_n : na, "USD", color=color.new(#ffd600, 0),  linewidth=2)
+p_eur = plot(show_lines ? eur_n : na, "EUR", color=color.new(#1565c0, 0),  linewidth=2)
+p_gbp = plot(show_lines ? gbp_n : na, "GBP", color=color.new(#7b1fa2, 0),  linewidth=2)
+p_jpy = plot(show_lines ? jpy_n : na, "JPY", color=color.new(#ff6d00, 0),  linewidth=2)
+p_chf = plot(show_lines ? chf_n : na, "CHF", color=color.new(#00e5ff, 0),  linewidth=2)
+p_aud = plot(show_lines ? aud_n : na, "AUD", color=color.new(#00c853, 0),  linewidth=2)
+p_nzd = plot(show_lines ? nzd_n : na, "NZD", color=color.new(#4caf50, 0),  linewidth=1)
+p_cad = plot(show_lines ? cad_n : na, "CAD", color=color.new(#ff1744, 0),  linewidth=1)
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  STRENGTH TABLE
+// ══════════════════════════════════════════════════════════════════════════════
+strength_label(v) =>
+    v >= strong_thr + 15 ? "VERY STRONG" :
+    v >= strong_thr      ? "STRONG"      :
+    v <= weak_thr  - 15  ? "VERY WEAK"   :
+    v <= weak_thr        ? "WEAK"        : "NEUTRAL"
+
+strength_color(v) =>
+    v >= strong_thr + 15 ? color.new(#00c853, 0) :
+    v >= strong_thr      ? color.new(#66bb6a, 0)  :
+    v <= weak_thr  - 15  ? color.new(#ff1744, 0)  :
+    v <= weak_thr        ? color.new(#ef9a9a, 0)  : color.new(#9e9e9e, 0)
+
+// Best pair suggestion
+find_best_pair(c1, c2, v1, v2) =>
+    diff = v1 - v2
+    diff > 15 ? c1 + c2 + " LONG" : diff < -15 ? c1 + c2 + " SHORT" : "—"
+
+var table t = table.new(position.top_right, 4, 11,
+     bgcolor=color.new(#0d1117, 5),
+     border_color=color.new(#30363d, 0), border_width=1,
+     frame_color=color.new(#58a6ff, 40), frame_width=2)
+
+if show_table and barstate.islast
+    // Header
+    table.cell(t, 0, 0, "Currency Strength", text_color=color.new(#58a6ff, 0),
+         text_size=size.small, bgcolor=color.new(#0d1117, 0))
+    table.merge_cells(t, 0, 0, 3, 0)
+
+    names  = array.from("USD","EUR","GBP","JPY","CHF","AUD","NZD","CAD")
+    values = array.from(usd_n, eur_n, gbp_n, jpy_n, chf_n, aud_n, nzd_n, cad_n)
+    cols   = array.from(
+         color.new(#ffd600,0), color.new(#1565c0,0), color.new(#7b1fa2,0), color.new(#ff6d00,0),
+         color.new(#00e5ff,0), color.new(#00c853,0), color.new(#4caf50,0), color.new(#ff1744,0))
+
+    for i = 0 to 7
+        v    = array.get(values, i)
+        name = array.get(names,  i)
+        clr  = array.get(cols,   i)
+        row_bg = i % 2 == 0 ? color.new(#161b22, 20) : color.new(#1c2128, 20)
+
+        table.cell(t, 0, i + 1, name,
+             text_color=clr, text_size=size.small, bgcolor=row_bg, text_halign=text.align_left)
+        table.cell(t, 1, i + 1, str.tostring(math.round(v, 1)),
+             text_color=strength_color(v), text_size=size.small, bgcolor=row_bg)
+        table.cell(t, 2, i + 1, str.format("{0,number,#}", math.round(v)),
+             text_color=color.new(#ffffff, 60), text_size=size.tiny, bgcolor=row_bg)
+
+        // Bar indicator
+        bar_pct = math.round(v / 100 * 8)
+        bar_str = ""
+        for j = 0 to 7
+            bar_str += j < bar_pct ? "█" : "░"
+        table.cell(t, 3, i + 1, bar_str,
+             text_color=strength_color(v), text_size=size.tiny, bgcolor=row_bg)
+
+    // Best pair suggestion
+    // Find strongest & weakest
+    max_v   = -999.0
+    min_v   = 999.0
+    max_c   = ""
+    min_c   = ""
+
+    for i = 0 to 7
+        v = array.get(values, i)
+        n = array.get(names, i)
+        if v > max_v
+            max_v := v
+            max_c := n
+        if v < min_v
+            min_v := v
+            min_c := n
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  DIVERGENCE — flag when current chart currency pair diverges from strength
+// ══════════════════════════════════════════════════════════════════════════════
+base_str  = str.contains(syminfo.ticker, "EUR") ? eur_n :
+            str.contains(syminfo.ticker, "GBP") ? gbp_n :
+            str.contains(syminfo.ticker, "AUD") ? aud_n :
+            str.contains(syminfo.ticker, "NZD") ? nzd_n :
+            str.contains(syminfo.ticker, "USD") ? usd_n : 50.0
+
+quote_str = str.contains(syminfo.ticker, "JPY") ? jpy_n :
+            str.contains(syminfo.ticker, "CHF") ? chf_n :
+            str.contains(syminfo.ticker, "CAD") ? cad_n :
+            str.contains(syminfo.ticker, "USD") ? usd_n : 50.0
+
+cs_long_bias  = base_str > strong_thr and quote_str < weak_thr
+cs_short_bias = base_str < weak_thr   and quote_str > strong_thr
+
+bgcolor(cs_long_bias  ? color.new(#00c853, 92) : na, title="CS Long Bias")
+bgcolor(cs_short_bias ? color.new(#ff1744, 92) : na, title="CS Short Bias")
+
+alertcondition(cs_long_bias,  "CS Long Bias",  "Currency Strength: base strong, quote weak — favor LONG")
+alertcondition(cs_short_bias, "CS Short Bias", "Currency Strength: base weak, quote strong — favor SHORT")

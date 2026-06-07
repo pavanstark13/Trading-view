@@ -1,0 +1,203 @@
+// This source code is subject to the terms of the Mozilla Public License 2.0
+// © Forex_AI_Oscillator — Multi-signal oscillator panel (RSI / MACD / Stoch / ATR / Momentum)
+//@version=5
+indicator("Forex AI Oscillator Panel", overlay=false, max_lines_count=100)
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  INPUTS
+// ══════════════════════════════════════════════════════════════════════════════
+show_rsi   = input.bool(true,  "RSI")
+rsi_len    = input.int(14, "RSI Length")
+show_macd  = input.bool(true,  "MACD")
+show_stoch = input.bool(true,  "Stochastic")
+show_mom   = input.bool(true,  "Momentum Histogram")
+show_table = input.bool(true,  "AI Signal Table")
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  CORE SIGNALS
+// ══════════════════════════════════════════════════════════════════════════════
+// RSI
+rsi      = ta.rsi(close, rsi_len)
+rsi_ob   = 70
+rsi_os   = 30
+rsi_bull = rsi > 50 and rsi[1] <= 50   // cross above 50
+rsi_bear = rsi < 50 and rsi[1] >= 50   // cross below 50
+
+// MACD
+[macd_line, sig_line, hist] = ta.macd(close, 12, 26, 9)
+macd_cross_up   = ta.crossover(macd_line,  sig_line)
+macd_cross_down = ta.crossunder(macd_line, sig_line)
+macd_bull       = macd_line > sig_line
+macd_bear       = macd_line < sig_line
+
+// Stochastic
+k_raw  = ta.stoch(close, high, low, 14)
+k_line = ta.sma(k_raw, 3)
+d_line = ta.sma(k_line, 3)
+stoch_cross_up   = ta.crossover(k_line,  d_line) and k_line < 80
+stoch_cross_down = ta.crossunder(k_line, d_line) and k_line > 20
+stoch_ob = k_line >= 80
+stoch_os = k_line <= 20
+
+// Momentum / Rate of Change
+mom = ta.roc(close, 14)
+mom_bull = mom > 0
+mom_bear = mom < 0
+mom_cross_bull = ta.crossover(mom,  0)
+mom_cross_bear = ta.crossunder(mom, 0)
+
+// ATR expansion
+atr      = ta.atr(14)
+atr_avg  = ta.sma(atr, 50)
+atr_exp  = atr > atr_avg * 1.3
+atr_cont = atr < atr_avg * 0.7
+
+// Bollinger Band squeeze
+[bb_mid, bb_up, bb_lo] = ta.bb(close, 20, 2.0)
+bb_width = (bb_up - bb_lo) / bb_mid
+bb_squeeze = bb_width < ta.lowest(bb_width, 50)[1] * 1.1
+bb_above   = close > bb_up
+bb_below   = close < bb_lo
+
+// CCI
+cci        = ta.cci(close, 20)
+cci_bull   = cci > 0 and cci[1] <= 0
+cci_bear   = cci < 0 and cci[1] >= 0
+
+// ADX (trend strength)
+[dmi_plus, dmi_minus, adx_val] = ta.dmi(14, 14)
+trend_strong  = adx_val > 25
+trend_weak    = adx_val < 20
+dmi_bull      = dmi_plus > dmi_minus
+dmi_bear      = dmi_plus < dmi_minus
+
+// Williams %R
+wpr = ta.wpr(14)
+wpr_bull = wpr > -50 and wpr[1] <= -50
+wpr_bear = wpr < -50 and wpr[1] >= -50
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  COMPOSITE AI SCORE
+// ══════════════════════════════════════════════════════════════════════════════
+bull_score = (rsi      > 50   ? 1 : 0) +
+             (macd_bull       ? 1 : 0) +
+             (k_line > d_line ? 1 : 0) +
+             (mom_bull        ? 1 : 0) +
+             (dmi_bull and trend_strong ? 1 : 0) +
+             (cci > 0         ? 1 : 0) +
+             (wpr > -50       ? 1 : 0) +
+             (close > bb_mid  ? 1 : 0)
+
+bear_score = (rsi      < 50   ? 1 : 0) +
+             (macd_bear       ? 1 : 0) +
+             (k_line < d_line ? 1 : 0) +
+             (mom_bear        ? 1 : 0) +
+             (dmi_bear and trend_strong ? 1 : 0) +
+             (cci < 0         ? 1 : 0) +
+             (wpr < -50       ? 1 : 0) +
+             (close < bb_mid  ? 1 : 0)
+
+max_score = 8
+osc_val   = (bull_score - bear_score)  // –8 to +8
+
+// Smoothed AI oscillator
+ai_osc      = ta.ema(osc_val, 3)
+ai_signal   = ta.ema(ai_osc,  9)
+ai_hist     = ai_osc - ai_signal
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  PLOTS
+// ══════════════════════════════════════════════════════════════════════════════
+// AI oscillator histogram
+hist_col = ai_hist >= 0 ?
+           (ai_hist > ai_hist[1] ? color.new(#00c853,0) : color.new(#66bb6a,40)) :
+           (ai_hist < ai_hist[1] ? color.new(#ff1744,0) : color.new(#ef9a9a,40))
+
+plot(show_mom ? ai_hist : na, "AI Histogram", color=hist_col, style=plot.style_columns, linewidth=2)
+plot(ai_osc,    "AI Osc",    color=color.new(#58a6ff, 0), linewidth=2)
+plot(ai_signal, "AI Signal", color=color.new(#ffd600, 0), linewidth=1)
+
+hline(4,  "Strong Bull", color=color.new(#00c853, 60), linestyle=hline.style_dashed)
+hline(0,  "Neutral",     color=color.new(#ffffff, 70), linestyle=hline.style_dotted)
+hline(-4, "Strong Bear", color=color.new(#ff1744, 60), linestyle=hline.style_dashed)
+
+// Cross signals on oscillator
+plotshape(ta.crossover(ai_osc, ai_signal) and ai_osc < 0,  "Osc Bull X",
+     shape.triangleup,   location.bottom, color=color.new(#00c853,0), size=size.tiny)
+plotshape(ta.crossunder(ai_osc, ai_signal) and ai_osc > 0, "Osc Bear X",
+     shape.triangledown, location.top,    color=color.new(#ff1744,0), size=size.tiny)
+
+// Divergence — price makes new high but osc doesn't (bearish div)
+price_hh   = high > ta.highest(high, 20)[1]
+osc_lh     = ai_osc < ta.highest(ai_osc, 20)[1]
+bear_div   = price_hh and osc_lh
+
+price_ll   = low < ta.lowest(low, 20)[1]
+osc_hl     = ai_osc > ta.lowest(ai_osc, 20)[1]
+bull_div   = price_ll and osc_hl
+
+plotshape(bear_div, "Bear Div", shape.diamond, location.top,    color=color.new(#ff6d00,0), size=size.tiny)
+plotshape(bull_div, "Bull Div", shape.diamond, location.bottom, color=color.new(#00bcd4,0), size=size.tiny)
+
+// BB squeeze marker
+plotshape(bb_squeeze, "BB Squeeze", shape.circle, location.bottom,
+     color=color.new(#ffd600, 40), size=size.tiny)
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  SIGNAL TABLE
+// ══════════════════════════════════════════════════════════════════════════════
+var table sig_t = table.new(position.top_right, 3, 12,
+     bgcolor=color.new(#0d1117, 5),
+     border_color=color.new(#30363d, 0), border_width=1,
+     frame_color=color.new(#58a6ff, 40), frame_width=2)
+
+tick_c(v) => v ? color.new(#00c853,0) : color.new(#ff1744,0)
+tick_s(v) => v ? "✔" : "✘"
+
+if show_table and barstate.islast
+    bias_str = bull_score > bear_score ? "BULLISH" : bull_score < bear_score ? "BEARISH" : "NEUTRAL"
+    bias_col = bull_score > bear_score ? color.new(#00c853,0) :
+               bull_score < bear_score ? color.new(#ff1744,0) : color.new(#9e9e9e,0)
+
+    table.cell(sig_t, 0, 0, "AI Oscillator Signals", text_color=color.new(#58a6ff,0),
+         text_size=size.small, bgcolor=color.new(#0d1117,0))
+    table.merge_cells(sig_t, 0, 0, 2, 0)
+
+    rows   = array.from("RSI","MACD","Stochastic","Momentum","ADX/DMI","CCI","Williams %R","BB Position")
+    b_vals = array.from(rsi > 50, macd_bull, k_line > d_line, mom_bull, dmi_bull, cci > 0, wpr > -50, close > bb_mid)
+    s_vals = array.from(rsi < 50, macd_bear, k_line < d_line, mom_bear, dmi_bear, cci < 0, wpr < -50, close < bb_mid)
+
+    for i = 0 to array.size(rows) - 1
+        bv = array.get(b_vals, i)
+        sv = array.get(s_vals, i)
+        row_bg = i % 2 == 0 ? color.new(#161b22,20) : color.new(#1c2128,20)
+        table.cell(sig_t, 0, i + 1, "  " + array.get(rows, i),
+             text_color=color.new(#8b949e,0), text_size=size.tiny, bgcolor=row_bg, text_halign=text.align_left)
+        table.cell(sig_t, 1, i + 1, tick_s(bv),
+             text_color=tick_c(bv), text_size=size.small, bgcolor=row_bg)
+        table.cell(sig_t, 2, i + 1, tick_s(sv),
+             text_color=tick_c(sv), text_size=size.small, bgcolor=row_bg)
+
+    // Score row
+    table.cell(sig_t, 0, 10, "  Score",
+         text_color=color.new(#8b949e,0), text_size=size.small, bgcolor=color.new(#161b22,20), text_halign=text.align_left)
+    table.cell(sig_t, 1, 10, str.tostring(bull_score) + "/" + str.tostring(max_score),
+         text_color=color.new(#00c853,0), text_size=size.small, bgcolor=color.new(#161b22,20))
+    table.cell(sig_t, 2, 10, str.tostring(bear_score) + "/" + str.tostring(max_score),
+         text_color=color.new(#ff1744,0), text_size=size.small, bgcolor=color.new(#161b22,20))
+
+    // Bias row
+    table.cell(sig_t, 0, 11, "  AI Bias",
+         text_color=color.new(#8b949e,0), text_size=size.small, bgcolor=color.new(#0d1117,0), text_halign=text.align_left)
+    table.cell(sig_t, 1, 11, bias_str,
+         text_color=bias_col, text_size=size.normal, bgcolor=color.new(#0d1117,0))
+    table.merge_cells(sig_t, 1, 11, 2, 11)
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  ALERTS
+// ══════════════════════════════════════════════════════════════════════════════
+alertcondition(ta.crossover(ai_osc, ai_signal)  and ai_osc < 2,  "AI Osc Bull X", "AI Oscillator: Bullish crossover")
+alertcondition(ta.crossunder(ai_osc, ai_signal) and ai_osc > -2, "AI Osc Bear X", "AI Oscillator: Bearish crossover")
+alertcondition(bear_div, "Bearish Divergence", "AI Oscillator: Bearish divergence detected")
+alertcondition(bull_div, "Bullish Divergence", "AI Oscillator: Bullish divergence detected")
+alertcondition(bb_squeeze, "BB Squeeze", "Bollinger Band squeeze — breakout imminent")
