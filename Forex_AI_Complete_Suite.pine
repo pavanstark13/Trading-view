@@ -1,0 +1,778 @@
+// This source code is subject to the terms of the Mozilla Public License 2.0
+// © Forex AI Complete Suite — All-in-One: SMC + ICT + S/R + Liquidity + Sessions + AI Brain
+// One paste. Everything on your chart.
+//@version=5
+indicator("Forex AI Complete Suite", overlay=true,
+          max_boxes_count=500, max_lines_count=500, max_labels_count=500,
+          max_bars_back=500)
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  ██████╗  █████╗ ███╗   ██╗███████╗██╗
+//  ██╔══██╗██╔══██╗████╗  ██║██╔════╝██║
+//  ██████╔╝███████║██╔██╗ ██║█████╗  ██║
+//  ██╔═══╝ ██╔══██║██║╚██╗██║██╔══╝  ██║
+//  ██║     ██║  ██║██║ ╚████║███████╗███████╗
+//  ╚═╝     ╚═╝  ╚═╝╚═╝  ╚═══╝╚══════╝╚══════╝
+//  SETTINGS
+// ══════════════════════════════════════════════════════════════════════════════
+
+// ── Display ──────────────────────────────────────────────────────────────────
+show_panel    = input.bool(true,  "Show AI Panel",               group="📊 Display")
+show_ob       = input.bool(true,  "Show Order Blocks",           group="📊 Display")
+show_fvg      = input.bool(true,  "Show Fair Value Gaps",        group="📊 Display")
+show_struct   = input.bool(true,  "Show Market Structure Labels",group="📊 Display")
+show_bos      = input.bool(true,  "Show BOS / CHoCH Lines",      group="📊 Display")
+show_sr       = input.bool(true,  "Show S/R Zones",              group="📊 Display")
+show_sd       = input.bool(true,  "Show Supply/Demand Boxes",    group="📊 Display")
+show_liq      = input.bool(true,  "Show Liquidity Levels",       group="📊 Display")
+show_sweeps   = input.bool(true,  "Show Liquidity Sweep Labels", group="📊 Display")
+show_kz       = input.bool(true,  "Show Session Killzones",      group="📊 Display")
+show_levels   = input.bool(true,  "Show PDH/PDL/PWH/PWL",        group="📊 Display")
+show_emas     = input.bool(true,  "Show EMAs (20/50/200)",        group="📊 Display")
+show_vwap     = input.bool(true,  "Show VWAP",                   group="📊 Display")
+show_trade    = input.bool(true,  "Show Trade Idea on Chart",    group="📊 Display")
+panel_pos     = input.string("Top Right", "Panel Position",      group="📊 Display",
+               options=["Top Right","Top Left","Bottom Right","Bottom Left"])
+
+// ── SMC Engine ───────────────────────────────────────────────────────────────
+swing_len     = input.int(10,   "Swing Detection Length",        group="🧠 SMC Engine", minval=3)
+ob_extend     = input.int(25,   "OB / FVG Extend Bars",          group="🧠 SMC Engine", minval=5)
+sr_len        = input.int(20,   "S/R Pivot Lookback",            group="🧠 SMC Engine", minval=5)
+sr_touch_min  = input.int(2,    "S/R Min Touches",               group="🧠 SMC Engine", minval=1)
+liq_len       = input.int(20,   "Liquidity Lookback",            group="🧠 SMC Engine", minval=5)
+
+// ── Sessions ─────────────────────────────────────────────────────────────────
+tz            = input.string("America/New_York", "Timezone",     group="🕐 Sessions",
+               options=["America/New_York","Europe/London","UTC"])
+
+// ── AI Brain ─────────────────────────────────────────────────────────────────
+min_score     = input.int(4,    "Min AI Score to Fire (1–11)",   group="🤖 AI Brain", minval=1, maxval=11)
+use_htf       = input.bool(true,"4H HTF Trend Filter",           group="🤖 AI Brain")
+use_session   = input.bool(true,"Session Filter (London/NY KZ)", group="🤖 AI Brain")
+use_vol_filt  = input.bool(true,"Volume Filter",                 group="🤖 AI Brain")
+
+// ── Risk ─────────────────────────────────────────────────────────────────────
+account_bal   = input.float(10000,"Account Balance ($)",         group="💰 Risk", minval=100)
+risk_pct      = input.float(1.0,  "Risk Per Trade (%)",          group="💰 Risk", minval=0.1, step=0.1)
+pip_size      = input.float(0.0001,"Pip Size",                   group="💰 Risk",
+               tooltip="0.0001 for majors  |  0.01 for JPY pairs")
+sl_atr_mult   = input.float(1.5,  "SL ATR Multiplier",          group="💰 Risk", step=0.25)
+tp1_rr        = input.float(1.5,  "TP1 R:R",                    group="💰 Risk", step=0.25)
+tp2_rr        = input.float(3.0,  "TP2 R:R",                    group="💰 Risk", step=0.25)
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  COLOURS
+// ══════════════════════════════════════════════════════════════════════════════
+c_bull   = #00c853
+c_bear   = #ff1744
+c_fvg_b  = #00e5ff
+c_fvg_s  = #ff6d00
+c_asia   = #7b1fa2
+c_lon    = #1565c0
+c_ny     = #e65100
+c_gold   = #ffd600
+c_cyan   = #00e5ff
+c_white  = color.white
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  MODULE 1 — CORE INDICATORS
+// ══════════════════════════════════════════════════════════════════════════════
+atr14       = ta.atr(14)
+atr_avg     = ta.sma(atr14, 50)
+ema20       = ta.ema(close, 20)
+ema50       = ta.ema(close, 50)
+ema200      = ta.ema(close, 200)
+vwap_v      = ta.vwap(hlc3)
+rsi         = ta.rsi(close, 14)
+[macd_l, sig_l, _macd_h] = ta.macd(close, 12, 26, 9)
+k_raw       = ta.stoch(close, high, low, 14)
+k_line      = ta.sma(k_raw, 3)
+d_line      = ta.sma(k_line, 3)
+[dmi_p, dmi_m, adx_v] = ta.dmi(14, 14)
+vol_avg     = ta.sma(volume, 20)
+atr_ratio   = atr14 / atr_avg
+
+// HTF (4H)
+htf_close   = request.security(syminfo.tickerid, "240", close)
+htf_ema20   = request.security(syminfo.tickerid, "240", ta.ema(close, 20))
+htf_ema50   = request.security(syminfo.tickerid, "240", ta.ema(close, 50))
+htf_bull    = htf_ema20 > htf_ema50 and htf_close > htf_ema50
+htf_bear    = htf_ema20 < htf_ema50 and htf_close < htf_ema50
+
+// Daily / Weekly levels
+pdh = request.security(syminfo.tickerid, "D", high[1], lookahead=barmerge.lookahead_on)
+pdl = request.security(syminfo.tickerid, "D", low[1],  lookahead=barmerge.lookahead_on)
+pwh = request.security(syminfo.tickerid, "W", high[1], lookahead=barmerge.lookahead_on)
+pwl = request.security(syminfo.tickerid, "W", low[1],  lookahead=barmerge.lookahead_on)
+
+// Simplified Currency Strength (7 USD pairs → relative ROC)
+cs_len = 14
+_eu = request.security("FX:EURUSD", timeframe.period, close)
+_gu = request.security("FX:GBPUSD", timeframe.period, close)
+_au = request.security("FX:AUDUSD", timeframe.period, close)
+_nu = request.security("FX:NZDUSD", timeframe.period, close)
+_uj = request.security("FX:USDJPY", timeframe.period, close)
+_uc = request.security("FX:USDCHF", timeframe.period, close)
+_ud = request.security("FX:USDCAD", timeframe.period, close)
+
+roc(s, n) => (s - s[n]) / s[n] * 100.0
+eur_cs = ta.ema(roc(_eu, cs_len),  3)
+gbp_cs = ta.ema(roc(_gu, cs_len),  3)
+aud_cs = ta.ema(roc(_au, cs_len),  3)
+nzd_cs = ta.ema(roc(_nu, cs_len),  3)
+usd_cs = ta.ema((-roc(_eu,cs_len) - roc(_gu,cs_len) - roc(_au,cs_len) - roc(_nu,cs_len)
+                 + roc(_uj,cs_len) + roc(_uc,cs_len) + roc(_ud,cs_len)) / 7.0, 3)
+jpy_cs = ta.ema(-roc(_uj, cs_len), 3)
+chf_cs = ta.ema(-roc(_uc, cs_len), 3)
+cad_cs = ta.ema(-roc(_ud, cs_len), 3)
+
+norm_cs(v) =>
+    h = ta.highest(v, 100)
+    l = ta.lowest(v,  100)
+    r = h - l
+    r > 0 ? (v - l) / r * 100.0 : 50.0
+
+usd_n = norm_cs(usd_cs)
+eur_n = norm_cs(eur_cs)
+gbp_n = norm_cs(gbp_cs)
+jpy_n = norm_cs(jpy_cs)
+chf_n = norm_cs(chf_cs)
+aud_n = norm_cs(aud_cs)
+nzd_n = norm_cs(nzd_cs)
+cad_n = norm_cs(cad_cs)
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  MODULE 2 — MARKET STRUCTURE (BOS / CHoCH / HH / HL / LH / LL)
+// ══════════════════════════════════════════════════════════════════════════════
+ph = ta.pivothigh(high, swing_len, swing_len)
+pl = ta.pivotlow(low,   swing_len, swing_len)
+
+var float last_ph     = na
+var float last_pl     = na
+var int   last_ph_bar = na
+var int   last_pl_bar = na
+var float prev_ph     = na
+var float prev_pl     = na
+var bool  bull_ms     = true
+var string sh_tag     = "SH"
+var string sl_tag     = "SL"
+
+if not na(ph)
+    prev_ph     := last_ph
+    last_ph     := ph
+    last_ph_bar := bar_index - swing_len
+    sh_tag      := not na(prev_ph) ? (ph > prev_ph ? "HH" : "LH") : "SH"
+    if show_struct
+        label.new(last_ph_bar, ph, sh_tag, style=label.style_label_down,
+             color=color.new(c_bear, 65), textcolor=c_white, size=size.tiny)
+
+if not na(pl)
+    prev_pl     := last_pl
+    last_pl     := pl
+    last_pl_bar := bar_index - swing_len
+    sl_tag      := not na(prev_pl) ? (pl > prev_pl ? "HL" : "LL") : "SL"
+    if show_struct
+        label.new(last_pl_bar, pl, sl_tag, style=label.style_label_up,
+             color=color.new(c_bull, 65), textcolor=c_white, size=size.tiny)
+
+bull_bos   = not na(last_ph) and close > last_ph and close[1] <= last_ph
+bear_bos   = not na(last_pl) and close < last_pl and close[1] >= last_pl
+bull_choch = not bull_ms and not na(last_ph) and close > last_ph
+bear_choch =  bull_ms and not na(last_pl) and close < last_pl
+
+if show_bos
+    if bull_bos or bull_choch
+        _lbl = bull_bos ? "BOS ▲" : "CHoCH ▲"
+        line.new(last_ph_bar, last_ph, bar_index, last_ph,
+             color=color.new(c_bull, 20), width=2,
+             style=bull_bos ? line.style_dashed : line.style_dotted)
+        label.new(bar_index, last_ph, _lbl, style=label.style_label_left,
+             color=color.new(c_bull, 60), textcolor=c_white, size=size.small)
+    if bear_bos or bear_choch
+        _lbl = bear_bos ? "BOS ▼" : "CHoCH ▼"
+        line.new(last_pl_bar, last_pl, bar_index, last_pl,
+             color=color.new(c_bear, 20), width=2,
+             style=bear_bos ? line.style_dashed : line.style_dotted)
+        label.new(bar_index, last_pl, _lbl, style=label.style_label_left,
+             color=color.new(c_bear, 60), textcolor=c_white, size=size.small)
+
+if bull_bos or bull_choch then bull_ms := true
+if bear_bos or bear_choch then bull_ms := false
+
+// Trend state string
+curr_bull   = ema20 > ema50 and ema50 > ema200
+curr_bear   = ema20 < ema50 and ema50 < ema200
+trend_str   = curr_bull and htf_bull ? "STRONG BULL" :
+              curr_bull              ? "BULL"        :
+              curr_bear and htf_bear ? "STRONG BEAR" :
+              curr_bear              ? "BEAR"         : "RANGING"
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  MODULE 3 — ORDER BLOCKS
+// ══════════════════════════════════════════════════════════════════════════════
+bull_imp = close > close[1] and close[1] > close[2]
+bear_imp = close < close[1] and close[1] < close[2]
+
+var float bull_ob_hi = na
+var float bull_ob_lo = na
+var float bear_ob_hi = na
+var float bear_ob_lo = na
+
+if bull_imp
+    for i = 1 to 5
+        if close[i] < open[i]
+            bull_ob_hi := high[i]
+            bull_ob_lo := low[i]
+            break
+if bear_imp
+    for i = 1 to 5
+        if close[i] > open[i]
+            bear_ob_hi := high[i]
+            bear_ob_lo := low[i]
+            break
+
+if show_ob and bull_imp and not na(bull_ob_lo)
+    box.new(bar_index - 5, bull_ob_hi, bar_index + ob_extend, bull_ob_lo,
+         bgcolor=color.new(c_bull, 83), border_color=color.new(c_bull, 30), border_width=1)
+
+if show_ob and bear_imp and not na(bear_ob_hi)
+    box.new(bar_index - 5, bear_ob_hi, bar_index + ob_extend, bear_ob_lo,
+         bgcolor=color.new(c_bear, 83), border_color=color.new(c_bear, 30), border_width=1)
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  MODULE 4 — FAIR VALUE GAPS
+// ══════════════════════════════════════════════════════════════════════════════
+bull_fvg = show_fvg and low > high[2]
+bear_fvg = show_fvg and high < low[2]
+
+if bull_fvg
+    box.new(bar_index - 2, low, bar_index + ob_extend, high[2],
+         bgcolor=color.new(c_fvg_b, 88), border_color=color.new(c_fvg_b, 55), border_width=1)
+
+if bear_fvg
+    box.new(bar_index - 2, low[2], bar_index + ob_extend, high,
+         bgcolor=color.new(c_fvg_s, 88), border_color=color.new(c_fvg_s, 55), border_width=1)
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  MODULE 5 — SUPPORT & RESISTANCE ZONES
+// ══════════════════════════════════════════════════════════════════════════════
+sr_ph = ta.pivothigh(high, sr_len, sr_len)
+sr_pl = ta.pivotlow(low,   sr_len, sr_len)
+
+var float[] res_levels = array.new<float>()
+var int[]   res_count  = array.new<int>()
+var float[] sup_levels = array.new<float>()
+var int[]   sup_count  = array.new<int>()
+
+sr_zone_d(p) => p * 0.4 / 100.0
+
+if not na(sr_ph)
+    found = false
+    if array.size(res_levels) > 0
+        for i = 0 to array.size(res_levels) - 1
+            if math.abs(array.get(res_levels, i) - sr_ph) <= sr_zone_d(sr_ph)
+                array.set(res_count, i, array.get(res_count, i) + 1)
+                found := true
+                break
+    if not found
+        array.push(res_levels, sr_ph)
+        array.push(res_count,  1)
+
+if not na(sr_pl)
+    found = false
+    if array.size(sup_levels) > 0
+        for i = 0 to array.size(sup_levels) - 1
+            if math.abs(array.get(sup_levels, i) - sr_pl) <= sr_zone_d(sr_pl)
+                array.set(sup_count, i, array.get(sup_count, i) + 1)
+                found := true
+                break
+    if not found
+        array.push(sup_levels, sr_pl)
+        array.push(sup_count,  1)
+
+if show_sr and barstate.islast
+    start_b = bar_index - sr_len * 4
+    if array.size(res_levels) > 0
+        for i = 0 to array.size(res_levels) - 1
+            cnt = array.get(res_count, i)
+            if cnt >= sr_touch_min
+                lvl = array.get(res_levels, i)
+                dz  = sr_zone_d(lvl)
+                box.new(start_b, lvl + dz, bar_index + 40, lvl - dz,
+                     bgcolor=color.new(c_bear, 80), border_color=color.new(c_bear, 40), border_width=1)
+                label.new(bar_index + 40, lvl, "R×" + str.tostring(cnt),
+                     style=label.style_label_left,
+                     color=color.new(c_bear, 70), textcolor=color.new(c_bear, 0), size=size.tiny)
+    if array.size(sup_levels) > 0
+        for i = 0 to array.size(sup_levels) - 1
+            cnt = array.get(sup_count, i)
+            if cnt >= sr_touch_min
+                lvl = array.get(sup_levels, i)
+                dz  = sr_zone_d(lvl)
+                box.new(start_b, lvl + dz, bar_index + 40, lvl - dz,
+                     bgcolor=color.new(c_bull, 80), border_color=color.new(c_bull, 40), border_width=1)
+                label.new(bar_index + 40, lvl, "S×" + str.tostring(cnt),
+                     style=label.style_label_left,
+                     color=color.new(c_bull, 70), textcolor=color.new(c_bull, 0), size=size.tiny)
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  MODULE 6 — SUPPLY & DEMAND BOXES
+// ══════════════════════════════════════════════════════════════════════════════
+strong_bull_c = (close - open) / open > 0.003 and volume > vol_avg * 1.2
+strong_bear_c = (open - close) / open > 0.003 and volume > vol_avg * 1.2
+
+if show_sd
+    if strong_bull_c
+        box.new(bar_index, close, bar_index + ob_extend, open,
+             bgcolor=color.new(#00bcd4, 87), border_color=color.new(#00bcd4, 45), border_width=1)
+    if strong_bear_c
+        box.new(bar_index, open, bar_index + ob_extend, close,
+             bgcolor=color.new(#ff6d00, 87), border_color=color.new(#ff6d00, 45), border_width=1)
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  MODULE 7 — LIQUIDITY ENGINE (BSL / SSL + SWEEPS)
+// ══════════════════════════════════════════════════════════════════════════════
+body_sz = math.abs(close - open)
+u_wick  = high  - math.max(open, close)
+l_wick  = math.min(open, close) - low
+
+prev_h_liq = ta.highest(high, liq_len)[1]
+prev_l_liq = ta.lowest(low,   liq_len)[1]
+
+bsl_swept = high > prev_h_liq and close < prev_h_liq and u_wick > body_sz * 0.5
+ssl_swept = low  < prev_l_liq and close > prev_l_liq and l_wick > body_sz * 0.5
+
+// EQH / EQL lines
+is_eqh = math.abs(high - high[liq_len]) / high < 0.002 and high == ta.highest(high, liq_len)
+is_eql = math.abs(low  - low[liq_len])  / low  < 0.002 and low  == ta.lowest(low,  liq_len)
+
+if show_liq
+    if is_eqh
+        line.new(bar_index - liq_len, high, bar_index + 15, high,
+             color=color.new(c_bull, 30), width=1, style=line.style_dotted)
+        label.new(bar_index + 15, high, "BSL",
+             style=label.style_label_left, color=color.new(c_bull, 75),
+             textcolor=c_bull, size=size.tiny)
+    if is_eql
+        line.new(bar_index - liq_len, low, bar_index + 15, low,
+             color=color.new(c_bear, 30), width=1, style=line.style_dotted)
+        label.new(bar_index + 15, low, "SSL",
+             style=label.style_label_left, color=color.new(c_bear, 75),
+             textcolor=c_bear, size=size.tiny)
+
+if show_sweeps
+    if bsl_swept
+        label.new(bar_index, high, "⚡ BSL Swept",
+             style=label.style_label_down, color=color.new(c_bull, 65),
+             textcolor=c_bull, size=size.small)
+    if ssl_swept
+        label.new(bar_index, low, "⚡ SSL Swept",
+             style=label.style_label_up, color=color.new(c_bear, 65),
+             textcolor=c_bear, size=size.small)
+
+// Previous Day / Week levels
+if show_levels
+    plot(pdh, "PDH", color=color.new(c_gold, 35), linewidth=1, style=plot.style_stepline)
+    plot(pdl, "PDL", color=color.new(c_gold, 35), linewidth=1, style=plot.style_stepline)
+    plot(pwh, "PWH", color=color.new(c_ny,   30), linewidth=2, style=plot.style_stepline)
+    plot(pwl, "PWL", color=color.new(c_ny,   30), linewidth=2, style=plot.style_stepline)
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  MODULE 8 — SESSION KILLZONES
+// ══════════════════════════════════════════════════════════════════════════════
+s_h  = hour(time, tz)
+s_m  = minute(time, tz)
+t_mn = s_h * 60 + s_m
+
+in_asia_kz   = t_mn >= 1200 and t_mn < 1380   // 8pm–11pm NY
+in_lon_kz    = t_mn >= 120  and t_mn < 300     // 2am–5am NY
+in_ny_kz     = t_mn >= 420  and t_mn < 600     // 7am–10am NY
+in_lon_close = t_mn >= 600  and t_mn < 720     // 10am–12pm NY
+in_overlap   = t_mn >= 420  and t_mn < 600     // London/NY overlap
+
+active_sess  = in_overlap   ? "London/NY Overlap" :
+               in_ny_kz     ? "New York KZ"       :
+               in_lon_kz    ? "London KZ"         :
+               in_asia_kz   ? "Asia KZ"           :
+               in_lon_close ? "London Close"      : "Off-Hours"
+
+best_sess    = in_lon_kz or in_ny_kz
+
+if show_kz
+    bgcolor(in_asia_kz   ? color.new(c_asia, 93) : na, title="Asia KZ")
+    bgcolor(in_lon_kz    ? color.new(c_lon,  93) : na, title="London KZ")
+    bgcolor(in_overlap   ? color.new(#1b5e20, 91): na, title="Overlap")
+    bgcolor(in_lon_close ? color.new(#00695c, 93): na, title="Lon Close")
+
+// Power of 3 labels
+if t_mn == 1200
+    label.new(bar_index, high, "ACCUM", style=label.style_label_down,
+         color=color.new(c_asia, 60), textcolor=c_white, size=size.tiny)
+if t_mn == 120
+    label.new(bar_index, high, "MANIP", style=label.style_label_down,
+         color=color.new(c_lon, 60), textcolor=c_white, size=size.tiny)
+if t_mn == 570
+    label.new(bar_index, low, "DIST", style=label.style_label_up,
+         color=color.new(c_ny, 60), textcolor=c_white, size=size.tiny)
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  MODULE 9 — PIVOT POINTS (Classic Daily)
+// ══════════════════════════════════════════════════════════════════════════════
+htf_c_d = request.security(syminfo.tickerid, "D", close[1], lookahead=barmerge.lookahead_on)
+htf_h_d = request.security(syminfo.tickerid, "D", high[1],  lookahead=barmerge.lookahead_on)
+htf_l_d = request.security(syminfo.tickerid, "D", low[1],   lookahead=barmerge.lookahead_on)
+
+pp_v = (htf_h_d + htf_l_d + htf_c_d) / 3.0
+r1_v = 2.0 * pp_v - htf_l_d
+s1_v = 2.0 * pp_v - htf_h_d
+r2_v = pp_v + (htf_h_d - htf_l_d)
+s2_v = pp_v - (htf_h_d - htf_l_d)
+
+plot(pp_v, "PP", color=color.new(c_white, 55), linewidth=1, style=plot.style_stepline)
+plot(r1_v, "R1", color=color.new(c_bear,  45), linewidth=1, style=plot.style_stepline)
+plot(s1_v, "S1", color=color.new(c_bull,  45), linewidth=1, style=plot.style_stepline)
+plot(r2_v, "R2", color=color.new(c_bear,  65), linewidth=1, style=plot.style_stepline)
+plot(s2_v, "S2", color=color.new(c_bull,  65), linewidth=1, style=plot.style_stepline)
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  MODULE 10 — EMAs + VWAP
+// ══════════════════════════════════════════════════════════════════════════════
+plot(show_emas ? ema20  : na, "EMA 20",  color=color.new(c_cyan,  35), linewidth=1)
+plot(show_emas ? ema50  : na, "EMA 50",  color=color.new(c_gold,  35), linewidth=1)
+plot(show_emas ? ema200 : na, "EMA 200", color=color.new(c_ny,    25), linewidth=2)
+plot(show_vwap ? vwap_v : na, "VWAP",    color=color.new(c_asia,  30), linewidth=2)
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  MODULE 11 — AI CONFLUENCE SCORING ENGINE
+// ══════════════════════════════════════════════════════════════════════════════
+// Long score (max 11)
+l_sc  = 0
+l_sc += (curr_bull and htf_bull    ? 2 : curr_bull ? 1 : 0)  // trend (×2 if aligned)
+l_sc += (bull_ms                   ? 1 : 0)                   // bullish structure
+l_sc += (bull_bos or bull_choch    ? 1 : 0)                   // structure break
+l_sc += (ssl_swept                 ? 1 : 0)                   // liquidity swept below
+l_sc += (rsi > 50 and rsi < 72    ? 1 : 0)                   // RSI confirmation
+l_sc += (macd_l > sig_l           ? 1 : 0)                   // MACD bullish
+l_sc += (k_line > d_line          ? 1 : 0)                   // Stoch bullish
+l_sc += (close > vwap_v           ? 1 : 0)                   // above VWAP
+l_sc += (volume > vol_avg * 1.2   ? 1 : 0)                   // volume spike
+l_sc += (adx_v > 20 and dmi_p > dmi_m ? 1 : 0)              // ADX/DMI confirm
+
+// Short score (max 11)
+s_sc  = 0
+s_sc += (curr_bear and htf_bear    ? 2 : curr_bear ? 1 : 0)
+s_sc += (not bull_ms               ? 1 : 0)
+s_sc += (bear_bos or bear_choch    ? 1 : 0)
+s_sc += (bsl_swept                 ? 1 : 0)
+s_sc += (rsi < 50 and rsi > 28    ? 1 : 0)
+s_sc += (macd_l < sig_l           ? 1 : 0)
+s_sc += (k_line < d_line          ? 1 : 0)
+s_sc += (close < vwap_v           ? 1 : 0)
+s_sc += (volume > vol_avg * 1.2   ? 1 : 0)
+s_sc += (adx_v > 20 and dmi_m > dmi_p ? 1 : 0)
+
+// Gate filters
+sess_ok   = not use_session or best_sess
+vol_ok    = not use_vol_filt or volume > vol_avg * 0.8
+htf_l_ok  = not use_htf or htf_bull
+htf_s_ok  = not use_htf or htf_bear
+
+long_fire  = l_sc >= min_score and sess_ok and htf_l_ok and vol_ok and
+             close > ema200 and strategy.position_size == 0
+short_fire = s_sc >= min_score and sess_ok and htf_s_ok and vol_ok and
+             close < ema200 and strategy.position_size == 0
+
+bias = l_sc > s_sc ? "BULLISH" : s_sc > l_sc ? "BEARISH" : "NEUTRAL"
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  MODULE 12 — TRADE IDEA GENERATOR
+// ══════════════════════════════════════════════════════════════════════════════
+risk_sl     = atr14 * sl_atr_mult
+long_entry  = close
+long_sl     = close - risk_sl
+long_tp1    = close + risk_sl * tp1_rr
+long_tp2    = close + risk_sl * tp2_rr
+short_entry = close
+short_sl    = close + risk_sl
+short_tp1   = close - risk_sl * tp1_rr
+short_tp2   = close - risk_sl * tp2_rr
+
+sl_pips_l   = risk_sl / pip_size
+sl_pips_s   = risk_sl / pip_size
+tp_pips_l   = (long_tp2  - long_entry)  / pip_size
+tp_pips_s   = (short_entry - short_tp2) / pip_size
+risk_amt    = account_bal * risk_pct / 100.0
+lot_l       = risk_amt / math.max(sl_pips_l * 10, 0.01)
+lot_s       = risk_amt / math.max(sl_pips_s * 10, 0.01)
+
+plotshape(long_fire,  "AI Long",  shape.triangleup,   location.belowbar,
+     color=color.new(c_bull, 0), size=size.normal)
+plotshape(short_fire, "AI Short", shape.triangledown,  location.abovebar,
+     color=color.new(c_bear, 0), size=size.normal)
+
+if show_trade and long_fire and barstate.islast
+    box.new(bar_index, long_sl,  bar_index + 50, long_tp2,
+         bgcolor=color.new(c_bull, 92), border_color=color.new(c_bull, 50), border_width=1)
+    line.new(bar_index - 2, long_entry, bar_index + 50, long_entry,
+         color=color.new(c_bull, 10), width=2)
+    line.new(bar_index - 2, long_sl,    bar_index + 50, long_sl,
+         color=color.new(c_bear, 20), width=1, style=line.style_dashed)
+    line.new(bar_index - 2, long_tp1,   bar_index + 50, long_tp1,
+         color=color.new(c_bull, 40), width=1, style=line.style_dotted)
+    line.new(bar_index - 2, long_tp2,   bar_index + 50, long_tp2,
+         color=color.new(c_bull, 10), width=2, style=line.style_dotted)
+    label.new(bar_index + 51, long_entry, "BUY  " + str.tostring(l_sc) + "/11",
+         style=label.style_label_left, color=color.new(c_bull, 55), textcolor=c_white, size=size.small)
+
+if show_trade and short_fire and barstate.islast
+    box.new(bar_index, short_tp2, bar_index + 50, short_sl,
+         bgcolor=color.new(c_bear, 92), border_color=color.new(c_bear, 50), border_width=1)
+    line.new(bar_index - 2, short_entry, bar_index + 50, short_entry,
+         color=color.new(c_bear, 10), width=2)
+    line.new(bar_index - 2, short_sl,    bar_index + 50, short_sl,
+         color=color.new(c_bear, 20), width=1, style=line.style_dashed)
+    line.new(bar_index - 2, short_tp1,   bar_index + 50, short_tp1,
+         color=color.new(c_bull, 40), width=1, style=line.style_dotted)
+    line.new(bar_index - 2, short_tp2,   bar_index + 50, short_tp2,
+         color=color.new(c_bull, 10), width=2, style=line.style_dotted)
+    label.new(bar_index + 51, short_entry, "SELL  " + str.tostring(s_sc) + "/11",
+         style=label.style_label_left, color=color.new(c_bear, 55), textcolor=c_white, size=size.small)
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  MODULE 13 — AI THINKING PANEL
+// ══════════════════════════════════════════════════════════════════════════════
+t_pos = panel_pos == "Top Right"    ? position.top_right    :
+        panel_pos == "Top Left"     ? position.top_left     :
+        panel_pos == "Bottom Right" ? position.bottom_right : position.bottom_left
+
+var table P = table.new(t_pos, 3, 42,
+     bgcolor=color.new(#0d1117, 5),
+     border_color=color.new(#30363d, 0), border_width=1,
+     frame_color=color.new(#58a6ff, 40), frame_width=2)
+
+sc_col(s) =>
+    s >= 8 ? color.new(c_bull, 0) :
+    s >= 5 ? color.new(#58a6ff, 0) :
+    s >= 3 ? color.new(c_gold, 0) : color.new(c_bear, 0)
+
+cs_bar(v) =>
+    b = ""
+    n = math.round(v / 100 * 8)
+    for i = 0 to 7
+        b += i < n ? "█" : "░"
+    b
+
+cs_col(v) =>
+    v >= 65 ? color.new(c_bull, 0) :
+    v >= 50 ? color.new(#66bb6a, 0) :
+    v <= 35 ? color.new(c_bear, 0)  :
+    v <= 50 ? color.new(#ef9a9a, 0) : color.new(#9e9e9e, 0)
+
+if show_panel and barstate.islast
+
+    cr1 = color.new(#161b22, 15)
+    cr2 = color.new(#1c2128, 15)
+    ch  = color.new(#0d1117,  0)
+    cd  = color.new(#8b949e,  0)
+
+    // ─ Header ─────────────────────────────────────────────────────────────
+    table.cell(P, 0, 0, "🤖  FOREX AI COMPLETE SUITE",
+         text_color=color.new(#58a6ff,0), text_size=size.small, bgcolor=ch)
+    table.merge_cells(P, 0, 0, 2, 0)
+
+    table.cell(P, 0, 1, syminfo.ticker + "   •   " + timeframe.period + "   •   " +
+         str.format_time(time, "HH:mm", tz) + " " + tz,
+         text_color=cd, text_size=size.tiny, bgcolor=ch)
+    table.merge_cells(P, 0, 1, 2, 1)
+
+    // ─ Section: Market Overview ───────────────────────────────────────────
+    table.cell(P, 0, 2, "── MARKET OVERVIEW ──────────────────",
+         text_color=cd, text_size=size.tiny, bgcolor=ch)
+    table.merge_cells(P, 0, 2, 2, 2)
+
+    trend_c = curr_bull ? color.new(c_bull,0) : curr_bear ? color.new(c_bear,0) : color.new(c_gold,0)
+    ms_c    = bull_ms   ? color.new(c_bull,0) : color.new(c_bear,0)
+    sess_c  = best_sess ? color.new(c_bull,0) : color.new(c_gold,0)
+    vol_c   = atr_ratio > 1.5 ? color.new(c_gold,0) : atr_ratio < 0.6 ? color.new(c_bear,0) : color.new(c_bull,0)
+    htf_c   = htf_bull  ? color.new(c_bull,0) : htf_bear ? color.new(c_bear,0) : color.new(c_gold,0)
+
+    table.cell(P, 0, 3, "  Trend",      text_color=cd, text_size=size.tiny, bgcolor=cr1, text_halign=text.align_left)
+    table.cell(P, 1, 3, trend_str,      text_color=trend_c, text_size=size.tiny, bgcolor=cr1)
+    table.cell(P, 2, 3, htf_bull ? "4H ▲" : htf_bear ? "4H ▼" : "4H –",
+         text_color=htf_c, text_size=size.tiny, bgcolor=cr1)
+
+    table.cell(P, 0, 4, "  Structure",  text_color=cd, text_size=size.tiny, bgcolor=cr2, text_halign=text.align_left)
+    table.cell(P, 1, 4, bull_ms ? "BULLISH MS" : "BEARISH MS", text_color=ms_c, text_size=size.tiny, bgcolor=cr2)
+    table.cell(P, 2, 4, sh_tag + " / " + sl_tag, text_color=cd, text_size=size.tiny, bgcolor=cr2)
+
+    table.cell(P, 0, 5, "  Session",    text_color=cd, text_size=size.tiny, bgcolor=cr1, text_halign=text.align_left)
+    table.cell(P, 1, 5, active_sess,    text_color=sess_c, text_size=size.tiny, bgcolor=cr1)
+    table.cell(P, 2, 5, best_sess ? "✔ Trade" : "⏳ Wait", text_color=sess_c, text_size=size.tiny, bgcolor=cr1)
+
+    table.cell(P, 0, 6, "  Volatility", text_color=cd, text_size=size.tiny, bgcolor=cr2, text_halign=text.align_left)
+    table.cell(P, 1, 6, (atr_ratio > 1.5 ? "HIGH" : atr_ratio < 0.6 ? "LOW" : "NORMAL") +
+         "  ATR×" + str.tostring(math.round(atr_ratio, 2)),
+         text_color=vol_c, text_size=size.tiny, bgcolor=cr2)
+    table.cell(P, 2, 6, str.tostring(math.round(atr14 / pip_size, 1)) + " pips",
+         text_color=cd, text_size=size.tiny, bgcolor=cr2)
+
+    table.cell(P, 0, 7, "  Pivot PP",   text_color=cd, text_size=size.tiny, bgcolor=cr1, text_halign=text.align_left)
+    table.cell(P, 1, 7, str.tostring(math.round(pp_v, 5)),
+         text_color=close > pp_v ? color.new(c_bull,0) : color.new(c_bear,0),
+         text_size=size.tiny, bgcolor=cr1)
+    table.cell(P, 2, 7, close > pp_v ? "Above PP ▲" : "Below PP ▼",
+         text_color=close > pp_v ? color.new(c_bull,0) : color.new(c_bear,0),
+         text_size=size.tiny, bgcolor=cr1)
+
+    // ─ Section: AI Thinking Log ───────────────────────────────────────────
+    table.cell(P, 0, 8, "── AI THINKING LOG ──────────────────",
+         text_color=cd, text_size=size.tiny, bgcolor=ch)
+    table.merge_cells(P, 0, 8, 2, 8)
+
+    table.cell(P, 0, 9, "  Signal",     text_color=cd, text_size=size.tiny, bgcolor=ch, text_halign=text.align_left)
+    table.cell(P, 1, 9, "LONG",         text_color=color.new(c_bull,0), text_size=size.tiny, bgcolor=ch)
+    table.cell(P, 2, 9, "SHORT",        text_color=color.new(c_bear,0), text_size=size.tiny, bgcolor=ch)
+
+    sig_names = array.from(
+         "HTF Trend Aligned","Bull Structure",  "BOS / CHoCH",
+         "Liquidity Swept",   "RSI 50–70/30–50","MACD Direction",
+         "Stoch K > D",       "Above VWAP",     "Volume Spike",
+         "ADX + DMI")
+    l_sigs = array.from(
+         curr_bull and htf_bull, bull_ms,
+         bull_bos or bull_choch, ssl_swept,
+         rsi > 50 and rsi < 72, macd_l > sig_l,
+         k_line > d_line, close > vwap_v,
+         volume > vol_avg * 1.2, adx_v > 20 and dmi_p > dmi_m)
+    s_sigs = array.from(
+         curr_bear and htf_bear, not bull_ms,
+         bear_bos or bear_choch, bsl_swept,
+         rsi < 50 and rsi > 28, macd_l < sig_l,
+         k_line < d_line, close < vwap_v,
+         volume > vol_avg * 1.2, adx_v > 20 and dmi_m > dmi_p)
+
+    for i = 0 to array.size(sig_names) - 1
+        rbg = i % 2 == 0 ? cr1 : cr2
+        lv  = array.get(l_sigs, i)
+        sv  = array.get(s_sigs, i)
+        table.cell(P, 0, 10 + i, "  " + array.get(sig_names, i),
+             text_color=cd, text_size=size.tiny, bgcolor=rbg, text_halign=text.align_left)
+        table.cell(P, 1, 10 + i, lv ? "✔" : "–",
+             text_color=lv ? color.new(c_bull,0) : color.new(#444d56,0), text_size=size.small, bgcolor=rbg)
+        table.cell(P, 2, 10 + i, sv ? "✔" : "–",
+             text_color=sv ? color.new(c_bear,0) : color.new(#444d56,0), text_size=size.small, bgcolor=rbg)
+
+    // ─ Score ──────────────────────────────────────────────────────────────
+    table.cell(P, 0, 20, "── CONFLUENCE SCORE ─────────────────",
+         text_color=cd, text_size=size.tiny, bgcolor=ch)
+    table.merge_cells(P, 0, 20, 2, 20)
+
+    table.cell(P, 0, 21, "  LONG  Score",  text_color=cd, text_size=size.small, bgcolor=cr1, text_halign=text.align_left)
+    table.cell(P, 1, 21, str.tostring(l_sc) + " / 11",
+         text_color=sc_col(l_sc), text_size=size.normal, bgcolor=cr1)
+    table.cell(P, 2, 21, l_sc >= min_score ? "▶  FIRE" : "○  Wait",
+         text_color=l_sc >= min_score ? color.new(c_bull,0) : cd, text_size=size.small, bgcolor=cr1)
+
+    table.cell(P, 0, 22, "  SHORT Score",  text_color=cd, text_size=size.small, bgcolor=cr2, text_halign=text.align_left)
+    table.cell(P, 1, 22, str.tostring(s_sc) + " / 11",
+         text_color=sc_col(s_sc), text_size=size.normal, bgcolor=cr2)
+    table.cell(P, 2, 22, s_sc >= min_score ? "▶  FIRE" : "○  Wait",
+         text_color=s_sc >= min_score ? color.new(c_bear,0) : cd, text_size=size.small, bgcolor=cr2)
+
+    bias_c = bias == "BULLISH" ? color.new(c_bull,0) : bias == "BEARISH" ? color.new(c_bear,0) : color.new(c_gold,0)
+    table.cell(P, 0, 23, "  AI Verdict",   text_color=cd, text_size=size.small, bgcolor=ch, text_halign=text.align_left)
+    table.cell(P, 1, 23, bias,             text_color=bias_c, text_size=size.normal, bgcolor=ch)
+    table.cell(P, 2, 23, str.tostring(math.max(l_sc, s_sc)) + "/11",
+         text_color=sc_col(math.max(l_sc, s_sc)), text_size=size.small, bgcolor=ch)
+
+    // ─ Trade Idea ─────────────────────────────────────────────────────────
+    table.cell(P, 0, 24, "── TRADE IDEA ───────────────────────",
+         text_color=cd, text_size=size.tiny, bgcolor=ch)
+    table.merge_cells(P, 0, 24, 2, 24)
+
+    if long_fire or short_fire
+        is_l    = long_fire
+        e_p     = is_l ? long_entry  : short_entry
+        sl_p    = is_l ? long_sl     : short_sl
+        tp1_p   = is_l ? long_tp1    : short_tp1
+        tp2_p   = is_l ? long_tp2    : short_tp2
+        sl_pips = is_l ? sl_pips_l   : sl_pips_s
+        tp_pips = is_l ? tp_pips_l   : tp_pips_s
+        lot_sz  = is_l ? lot_l       : lot_s
+        d_col   = is_l ? color.new(c_bull,0) : color.new(c_bear,0)
+        d_txt   = is_l ? "🟢  LONG" : "🔴  SHORT"
+
+        table.cell(P, 0, 25, "  Direction", text_color=cd, text_size=size.tiny, bgcolor=cr1, text_halign=text.align_left)
+        table.cell(P, 1, 25, d_txt,          text_color=d_col, text_size=size.small, bgcolor=cr1)
+        table.cell(P, 2, 25, "R:R  1:" + str.tostring(tp2_rr / sl_atr_mult, "#.#"),
+             text_color=cd, text_size=size.tiny, bgcolor=cr1)
+
+        table.cell(P, 0, 26, "  Entry",     text_color=cd, text_size=size.tiny, bgcolor=cr2, text_halign=text.align_left)
+        table.cell(P, 1, 26, str.tostring(math.round(e_p, 5)),
+             text_color=c_white, text_size=size.tiny, bgcolor=cr2)
+        table.cell(P, 2, 26, "SL " + str.tostring(math.round(sl_pips, 1)) + " pips",
+             text_color=color.new(c_bear,0), text_size=size.tiny, bgcolor=cr2)
+
+        table.cell(P, 0, 27, "  Stop Loss", text_color=cd, text_size=size.tiny, bgcolor=cr1, text_halign=text.align_left)
+        table.cell(P, 1, 27, str.tostring(math.round(sl_p, 5)),
+             text_color=color.new(c_bear,0), text_size=size.tiny, bgcolor=cr1)
+        table.cell(P, 2, 27, "ATR ×" + str.tostring(sl_atr_mult),
+             text_color=cd, text_size=size.tiny, bgcolor=cr1)
+
+        table.cell(P, 0, 28, "  TP1",       text_color=cd, text_size=size.tiny, bgcolor=cr2, text_halign=text.align_left)
+        table.cell(P, 1, 28, str.tostring(math.round(tp1_p, 5)),
+             text_color=color.new(c_bull,0), text_size=size.tiny, bgcolor=cr2)
+        table.cell(P, 2, 28, "+" + str.tostring(math.round(sl_pips * tp1_rr, 1)) + " pips",
+             text_color=color.new(c_bull,0), text_size=size.tiny, bgcolor=cr2)
+
+        table.cell(P, 0, 29, "  TP2",       text_color=cd, text_size=size.tiny, bgcolor=cr1, text_halign=text.align_left)
+        table.cell(P, 1, 29, str.tostring(math.round(tp2_p, 5)),
+             text_color=color.new(c_bull,0), text_size=size.tiny, bgcolor=cr1)
+        table.cell(P, 2, 29, "+" + str.tostring(math.round(tp_pips, 1)) + " pips",
+             text_color=color.new(c_bull,0), text_size=size.tiny, bgcolor=cr1)
+
+        table.cell(P, 0, 30, "  Risk $",    text_color=cd, text_size=size.tiny, bgcolor=cr2, text_halign=text.align_left)
+        table.cell(P, 1, 30, "$" + str.tostring(math.round(risk_amt, 2)) +
+             "  (" + str.tostring(risk_pct) + "%)",
+             text_color=color.new(c_gold,0), text_size=size.tiny, bgcolor=cr2)
+        table.cell(P, 2, 30, "≈ " + str.tostring(math.round(lot_sz, 2)) + " lots",
+             text_color=cd, text_size=size.tiny, bgcolor=cr2)
+
+    else
+        table.cell(P, 0, 25, "  No setup — score below threshold",
+             text_color=color.new(c_gold,0), text_size=size.tiny, bgcolor=cr1)
+        table.merge_cells(P, 0, 25, 2, 25)
+        table.cell(P, 0, 26, "  or session / filters not met.",
+             text_color=cd, text_size=size.tiny, bgcolor=cr2)
+        table.merge_cells(P, 0, 26, 2, 26)
+
+    // ─ Currency Strength ──────────────────────────────────────────────────
+    table.cell(P, 0, 31, "── CURRENCY STRENGTH ────────────────",
+         text_color=cd, text_size=size.tiny, bgcolor=ch)
+    table.merge_cells(P, 0, 31, 2, 31)
+
+    cs_names = array.from("USD","EUR","GBP","JPY","CHF","AUD","NZD","CAD")
+    cs_vals  = array.from(usd_n, eur_n, gbp_n, jpy_n, chf_n, aud_n, nzd_n, cad_n)
+
+    for i = 0 to 7
+        v   = array.get(cs_vals,  i)
+        n   = array.get(cs_names, i)
+        rbg = i % 2 == 0 ? cr1 : cr2
+        table.cell(P, 0, 32 + i, "  " + n,
+             text_color=cs_col(v), text_size=size.tiny, bgcolor=rbg, text_halign=text.align_left)
+        table.cell(P, 1, 32 + i, str.tostring(math.round(v, 1)),
+             text_color=cs_col(v), text_size=size.tiny, bgcolor=rbg)
+        table.cell(P, 2, 32 + i, cs_bar(v),
+             text_color=cs_col(v), text_size=size.tiny, bgcolor=rbg)
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  ALERTS
+// ══════════════════════════════════════════════════════════════════════════════
+alertcondition(long_fire,  "AI Long  Setup", "Forex AI — LONG  setup. Score " + str.tostring(l_sc) + "/11")
+alertcondition(short_fire, "AI Short Setup", "Forex AI — SHORT setup. Score " + str.tostring(s_sc) + "/11")
+alertcondition(bull_bos,   "Bull BOS",       "Bullish Break of Structure")
+alertcondition(bear_bos,   "Bear BOS",       "Bearish Break of Structure")
+alertcondition(bull_choch, "Bull CHoCH",     "Bullish Change of Character — possible reversal")
+alertcondition(bear_choch, "Bear CHoCH",     "Bearish Change of Character — possible reversal")
+alertcondition(bsl_swept,  "BSL Swept",      "Buy-Side Liquidity swept — watch for short")
+alertcondition(ssl_swept,  "SSL Swept",      "Sell-Side Liquidity swept — watch for long")
