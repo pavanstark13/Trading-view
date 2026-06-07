@@ -1,0 +1,181 @@
+// This source code is subject to the terms of the Mozilla Public License 2.0
+// © ICT_Killzones_Sessions — ICT Session High/Low + Killzone Highlights
+//@version=5
+indicator("ICT Killzones & Sessions", overlay=true, max_boxes_count=500, max_lines_count=200)
+
+// ─── INPUTS ───────────────────────────────────────────────────────────────────
+tz           = input.string("America/New_York", "Timezone",
+               options=["America/New_York","Europe/London","Asia/Tokyo","UTC"])
+
+show_asia    = input.bool(true, "Asia Session",           group="Sessions")
+asia_col     = input.color(color.new(#7b1fa2, 88), "Asia Color")
+show_london  = input.bool(true, "London Session",         group="Sessions")
+lon_col      = input.color(color.new(#1565c0, 88), "London Color")
+show_ny      = input.bool(true, "New York Session",       group="Sessions")
+ny_col       = input.color(color.new(#e65100, 88), "NY Color")
+
+show_kz_box  = input.bool(true, "Show Killzone Boxes",    group="Killzones")
+kz_asia_col  = input.color(color.new(#7b1fa2, 75), "Asia KZ")
+kz_lon_col   = input.color(color.new(#1565c0, 75), "London KZ")
+kz_ny_col    = input.color(color.new(#e65100, 75), "NY Open KZ")
+kz_lon_close = input.color(color.new(#00897b, 75), "London Close KZ")
+
+show_hl      = input.bool(true, "Show Session H/L Lines", group="Session Levels")
+hl_width     = input.int(2, "Line Width", minval=1,        group="Session Levels")
+show_labels  = input.bool(true, "Show Labels")
+
+// ─── SESSION TIMES (NY TIME in minutes) ───────────────────────────────────────
+// Asia:         20:00 – 00:00 (1200–1440/0)
+// London:       02:00 – 10:00 (120–600)
+// NY:           07:00 – 16:00 (420–960)
+// Asia KZ:      20:00 – 23:00 (1200–1380)
+// London KZ:    02:00 – 05:00 (120–300)
+// NY Open KZ:   07:00 – 10:00 (420–600)
+// London Close: 10:00 – 12:00 (600–720)
+
+t_min(h, m) => h * 60 + m
+
+sess_h  = hour(time, tz)
+sess_m  = minute(time, tz)
+t       = t_min(sess_h, sess_m)
+
+in_asia    = t >= 1200 or t < 0         // simplified for display
+in_london  = t >= 120  and t < 600
+in_ny      = t >= 420  and t < 960
+
+// Killzones
+in_asia_kz   = t >= 1200 and t < 1380
+in_lon_kz    = t >= 120  and t < 300
+in_ny_kz     = t >= 420  and t < 600
+in_lon_close = t >= 600  and t < 720
+
+// ─── SESSION HIGH/LOW TRACKING ────────────────────────────────────────────────
+var float asia_h   = na
+var float asia_l   = na
+var float lon_h    = na
+var float lon_l    = na
+var float ny_h     = na
+var float ny_l     = na
+
+var int   asia_start = na
+var int   lon_start  = na
+var int   ny_start   = na
+
+// Reset on session open
+new_asia   = t == 1200 or (t == 0 and sess_h == 0)
+new_london = t == 120
+new_ny     = t == 420
+
+if new_asia
+    asia_h     := high
+    asia_l     := low
+    asia_start := bar_index
+else if in_asia
+    asia_h := math.max(asia_h, high)
+    asia_l := math.min(asia_l, low)
+
+if new_london
+    lon_h     := high
+    lon_l     := low
+    lon_start := bar_index
+else if in_london
+    lon_h := math.max(lon_h, high)
+    lon_l := math.min(lon_l, low)
+
+if new_ny
+    ny_h     := high
+    ny_l     := low
+    ny_start := bar_index
+else if in_ny
+    ny_h := math.max(ny_h, high)
+    ny_l := math.min(ny_l, low)
+
+// ─── SESSION BACKGROUND ───────────────────────────────────────────────────────
+bgcolor(show_london and in_london and not in_london[1] ? color.new(lon_col, 95) : na)
+bgcolor(show_ny     and in_ny     and not in_ny[1]     ? color.new(ny_col,  95) : na)
+
+// Per-bar session bg
+bgcolor(show_london and in_london ? lon_col : na)
+bgcolor(show_ny     and in_ny     ? ny_col  : na)
+
+// ─── KILLZONE BOXES ───────────────────────────────────────────────────────────
+var box kz_box = na
+
+// Create a new box at killzone open, extend it each bar
+kz_active = in_asia_kz or in_lon_kz or in_ny_kz or in_lon_close
+kz_color  = in_asia_kz   ? kz_asia_col  :
+            in_lon_kz    ? kz_lon_col   :
+            in_ny_kz     ? kz_ny_col    :
+            in_lon_close ? kz_lon_close : na
+
+kz_open_bar = (in_asia_kz   and not in_asia_kz[1])   or
+              (in_lon_kz    and not in_lon_kz[1])    or
+              (in_ny_kz     and not in_ny_kz[1])     or
+              (in_lon_close and not in_lon_close[1])
+
+if show_kz_box
+    if kz_open_bar
+        kz_box := box.new(bar_index, high, bar_index + 1, low,
+             bgcolor=kz_color, border_color=color.new(kz_color, 40), border_width=0)
+    else if kz_active and not na(kz_box)
+        box.set_right(kz_box, bar_index + 1)
+        box.set_top(kz_box,   math.max(box.get_top(kz_box),    high))
+        box.set_bottom(kz_box, math.min(box.get_bottom(kz_box), low))
+
+// ─── SESSION HIGH/LOW LINES ───────────────────────────────────────────────────
+// Draw lines that update each bar
+var line asia_h_line  = na
+var line asia_l_line  = na
+var line lon_h_line   = na
+var line lon_l_line   = na
+
+if show_hl
+    if new_asia
+        if not na(asia_h_line) then line.delete(asia_h_line)
+        if not na(asia_l_line) then line.delete(asia_l_line)
+        asia_h_line := line.new(bar_index, high, bar_index + 50, high,
+             color=color.new(#7b1fa2, 30), width=hl_width, style=line.style_dashed, extend=extend.right)
+        asia_l_line := line.new(bar_index, low,  bar_index + 50, low,
+             color=color.new(#7b1fa2, 30), width=hl_width, style=line.style_dashed, extend=extend.right)
+
+    if in_asia and not na(asia_h_line)
+        line.set_y1(asia_h_line, asia_h)
+        line.set_y2(asia_h_line, asia_h)
+        line.set_y1(asia_l_line, asia_l)
+        line.set_y2(asia_l_line, asia_l)
+
+    if new_london
+        if not na(lon_h_line) then line.delete(lon_h_line)
+        if not na(lon_l_line) then line.delete(lon_l_line)
+        lon_h_line := line.new(bar_index, high, bar_index + 50, high,
+             color=color.new(#1565c0, 30), width=hl_width, style=line.style_dotted, extend=extend.right)
+        lon_l_line := line.new(bar_index, low,  bar_index + 50, low,
+             color=color.new(#1565c0, 30), width=hl_width, style=line.style_dotted, extend=extend.right)
+
+    if in_london and not na(lon_h_line)
+        line.set_y1(lon_h_line, lon_h)
+        line.set_y2(lon_h_line, lon_h)
+        line.set_y1(lon_l_line, lon_l)
+        line.set_y2(lon_l_line, lon_l)
+
+// ─── LABELS ───────────────────────────────────────────────────────────────────
+if show_labels
+    if in_asia_kz   and not in_asia_kz[1]
+        label.new(bar_index, high, "Asia KZ",   style=label.style_label_down,
+             color=color.new(#7b1fa2,60), textcolor=color.white, size=size.tiny)
+    if in_lon_kz    and not in_lon_kz[1]
+        label.new(bar_index, high, "London KZ", style=label.style_label_down,
+             color=color.new(#1565c0,60), textcolor=color.white, size=size.tiny)
+    if in_ny_kz     and not in_ny_kz[1]
+        label.new(bar_index, high, "NY Open KZ",style=label.style_label_down,
+             color=color.new(#e65100,60), textcolor=color.white, size=size.tiny)
+    if in_lon_close and not in_lon_close[1]
+        label.new(bar_index, high, "Lon Close", style=label.style_label_down,
+             color=color.new(#00897b,60), textcolor=color.white, size=size.tiny)
+
+// Asia range breakout alert
+asia_breakout_up   = not na(asia_h) and close > asia_h and close[1] <= asia_h and not in_asia
+asia_breakout_down = not na(asia_l) and close < asia_l and close[1] >= asia_l and not in_asia
+
+alertcondition(asia_breakout_up,   "Asia Range Break Up",   "Price broke above Asia session high")
+alertcondition(asia_breakout_down, "Asia Range Break Down",  "Price broke below Asia session low")

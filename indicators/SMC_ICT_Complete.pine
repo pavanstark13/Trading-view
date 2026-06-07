@@ -1,0 +1,297 @@
+// This source code is subject to the terms of the Mozilla Public License 2.0
+// © SMC_ICT_Complete — Smart Money Concepts + ICT Full Suite
+//@version=5
+indicator("SMC/ICT Complete Suite", overlay=true, max_boxes_count=500, max_lines_count=500, max_labels_count=500)
+
+// ─── INPUTS ──────────────────────────────────────────────────────────────────
+var g_ms   = "Market Structure"
+var g_ob   = "Order Blocks"
+var g_fvg  = "Fair Value Gaps"
+var g_liq  = "Liquidity"
+var g_kz   = "Killzones"
+var g_pd   = "Premium / Discount"
+
+// Market Structure
+show_ms      = input.bool(true,  "Show Market Structure",    group=g_ms)
+show_bos     = input.bool(true,  "Show BOS",                 group=g_ms)
+show_choch   = input.bool(true,  "Show CHoCH",               group=g_ms)
+swing_len    = input.int(10,     "Swing Length",  minval=3,  group=g_ms)
+ms_bull_col  = input.color(color.new(#00c853, 0),  "Bullish Color", group=g_ms)
+ms_bear_col  = input.color(color.new(#ff1744, 0),  "Bearish Color", group=g_ms)
+
+// Order Blocks
+show_ob      = input.bool(true,  "Show Order Blocks",        group=g_ob)
+ob_bull_col  = input.color(color.new(#00c853, 80), "Bullish OB",    group=g_ob)
+ob_bear_col  = input.color(color.new(#ff1744, 80), "Bearish OB",    group=g_ob)
+ob_mitig_col = input.color(color.new(#ffd600, 80), "Breaker Block", group=g_ob)
+ob_extend    = input.int(20,     "Extend Bars",  minval=1,   group=g_ob)
+
+// Fair Value Gaps
+show_fvg     = input.bool(true,  "Show Fair Value Gaps",     group=g_fvg)
+fvg_bull_col = input.color(color.new(#00e5ff, 85), "Bullish FVG",   group=g_fvg)
+fvg_bear_col = input.color(color.new(#ff6d00, 85), "Bearish FVG",   group=g_fvg)
+fvg_extend   = input.int(50,     "Extend Bars",  minval=1,   group=g_fvg)
+fvg_hide_mid = input.bool(true,  "Hide when mitigated",      group=g_fvg)
+
+// Liquidity
+show_liq     = input.bool(true,  "Show Liquidity Levels",    group=g_liq)
+liq_len      = input.int(20,     "Lookback for EQH/EQL",     group=g_liq)
+liq_bull_col = input.color(color.new(#00c853, 0),  "BSL Color",     group=g_liq)
+liq_bear_col = input.color(color.new(#ff1744, 0),  "SSL Color",     group=g_liq)
+
+// Killzones
+show_kz      = input.bool(true,  "Show Session Killzones",   group=g_kz)
+kz_asia_col  = input.color(color.new(#7b1fa2, 90), "Asia",          group=g_kz)
+kz_lon_col   = input.color(color.new(#1565c0, 90), "London",        group=g_kz)
+kz_ny_col    = input.color(color.new(#e65100, 90), "New York",      group=g_kz)
+tz           = input.string("America/New_York",    "Timezone",      group=g_kz,
+               options=["America/New_York","Europe/London","Asia/Tokyo","UTC"])
+
+// Premium / Discount
+show_pd      = input.bool(true,  "Show Premium/Discount",    group=g_pd)
+pd_len       = input.int(50,     "Range Lookback",           group=g_pd)
+
+// ─── UTILITIES ───────────────────────────────────────────────────────────────
+ph(src, len) => ta.pivothigh(src, len, len)
+pl(src, len) => ta.pivotlow(src, len, len)
+
+// ─── MARKET STRUCTURE ────────────────────────────────────────────────────────
+var float last_ph = na
+var float last_pl = na
+var int   last_ph_bar = na
+var int   last_pl_bar = na
+var bool  bull_structure = true
+
+swing_high = ph(high, swing_len)
+swing_low  = pl(low,  swing_len)
+
+if not na(swing_high)
+    last_ph     := swing_high
+    last_ph_bar := bar_index - swing_len
+
+if not na(swing_low)
+    last_pl     := swing_low
+    last_pl_bar := bar_index - swing_len
+
+// BOS / CHoCH detection
+var float bos_level    = na
+var bool  bos_bull     = na
+var int   bos_bar      = na
+
+// Bullish BOS: price closes above previous swing high
+bull_bos = show_ms and show_bos and not na(last_ph) and close > last_ph and close[1] <= last_ph
+// Bearish BOS: price closes below previous swing low
+bear_bos = show_ms and show_bos and not na(last_pl) and close < last_pl and close[1] >= last_pl
+
+// CHoCH — opposing move against trend
+bull_choch = show_ms and show_choch and not bull_structure and not na(last_ph) and close > last_ph
+bear_choch = show_ms and show_choch and  bull_structure and not na(last_pl) and close < last_pl
+
+if bull_bos
+    line.new(last_ph_bar, last_ph, bar_index, last_ph,
+         color=ms_bull_col, width=2, style=line.style_dashed)
+    label.new(bar_index, last_ph, "BOS", style=label.style_label_left,
+         color=color.new(ms_bull_col,70), textcolor=ms_bull_col, size=size.small)
+    bull_structure := true
+
+if bear_bos
+    line.new(last_pl_bar, last_pl, bar_index, last_pl,
+         color=ms_bear_col, width=2, style=line.style_dashed)
+    label.new(bar_index, last_pl, "BOS", style=label.style_label_left,
+         color=color.new(ms_bear_col,70), textcolor=ms_bear_col, size=size.small)
+    bull_structure := false
+
+if bull_choch
+    line.new(last_ph_bar, last_ph, bar_index, last_ph,
+         color=ms_bull_col, width=2, style=line.style_dotted)
+    label.new(bar_index, last_ph, "CHoCH", style=label.style_label_left,
+         color=color.new(ms_bull_col,70), textcolor=ms_bull_col, size=size.small)
+    bull_structure := true
+
+if bear_choch
+    line.new(last_pl_bar, last_pl, bar_index, last_pl,
+         color=ms_bear_col, width=2, style=line.style_dotted)
+    label.new(bar_index, last_pl, "CHoCH", style=label.style_label_left,
+         color=color.new(ms_bear_col,70), textcolor=ms_bear_col, size=size.small)
+    bull_structure := false
+
+// ─── ORDER BLOCKS ─────────────────────────────────────────────────────────────
+// Bullish OB: last bearish candle before a bullish impulse that breaks structure
+// Bearish OB: last bullish candle before a bearish impulse that breaks structure
+
+var box[] bull_ob_boxes = array.new<box>()
+var box[] bear_ob_boxes = array.new<box>()
+
+// Detect impulse — 3-bar momentum
+bull_impulse = close > close[1] and close[1] > close[2] and (close - close[2]) / close[2] > 0.001
+bear_impulse = close < close[1] and close[1] < close[2] and (close[2] - close) / close[2] > 0.001
+
+// Bullish OB = last bearish candle before bullish impulse
+if show_ob and bull_impulse
+    // Find last bearish candle (up to 5 bars back)
+    ob_idx = -1
+    for i = 1 to 5
+        if close[i] < open[i]
+            ob_idx := i
+            break
+    if ob_idx > 0
+        b = box.new(bar_index - ob_idx, high[ob_idx], bar_index + ob_extend, low[ob_idx],
+             bgcolor=ob_bull_col, border_color=ms_bull_col, border_width=1)
+        array.push(bull_ob_boxes, b)
+
+// Bearish OB = last bullish candle before bearish impulse
+if show_ob and bear_impulse
+    ob_idx = -1
+    for i = 1 to 5
+        if close[i] > open[i]
+            ob_idx := i
+            break
+    if ob_idx > 0
+        b = box.new(bar_index - ob_idx, high[ob_idx], bar_index + ob_extend, low[ob_idx],
+             bgcolor=ob_bear_col, border_color=ms_bear_col, border_width=1)
+        array.push(bear_ob_boxes, b)
+
+// Extend / mitigate OBs
+if show_ob and array.size(bull_ob_boxes) > 0
+    for i = array.size(bull_ob_boxes) - 1 to 0
+        b = array.get(bull_ob_boxes, i)
+        btop = box.get_top(b)
+        bbot = box.get_bottom(b)
+        if low <= bbot  // fully mitigated
+            box.set_bgcolor(b, ob_mitig_col)
+            box.set_border_color(b, color.new(#ffd600, 0))
+            array.remove(bull_ob_boxes, i)
+        else
+            box.set_right(b, bar_index + ob_extend)
+
+if show_ob and array.size(bear_ob_boxes) > 0
+    for i = array.size(bear_ob_boxes) - 1 to 0
+        b = array.get(bear_ob_boxes, i)
+        btop = box.get_top(b)
+        if high >= btop  // fully mitigated
+            box.set_bgcolor(b, ob_mitig_col)
+            box.set_border_color(b, color.new(#ffd600, 0))
+            array.remove(bear_ob_boxes, i)
+        else
+            box.set_right(b, bar_index + ob_extend)
+
+// ─── FAIR VALUE GAPS ─────────────────────────────────────────────────────────
+// FVG: 3-candle formation — gap between candle[2].high/low and candle[0].low/high
+
+var box[] bull_fvg_boxes = array.new<box>()
+var box[] bear_fvg_boxes = array.new<box>()
+
+bull_fvg_cond = show_fvg and low > high[2] and close[1] > high[2]
+bear_fvg_cond = show_fvg and high < low[2] and close[1] < low[2]
+
+if bull_fvg_cond
+    b = box.new(bar_index - 2, low, bar_index + fvg_extend, high[2],
+         bgcolor=fvg_bull_col, border_color=color.new(#00e5ff,60), border_width=1)
+    array.push(bull_fvg_boxes, b)
+
+if bear_fvg_cond
+    b = box.new(bar_index - 2, low[2], bar_index + fvg_extend, high,
+         bgcolor=fvg_bear_col, border_color=color.new(#ff6d00,60), border_width=1)
+    array.push(bear_fvg_boxes, b)
+
+// Mitigation check
+if fvg_hide_mid
+    if array.size(bull_fvg_boxes) > 0
+        for i = array.size(bull_fvg_boxes) - 1 to 0
+            b = array.get(bull_fvg_boxes, i)
+            if low <= box.get_top(b)
+                box.delete(b)
+                array.remove(bull_fvg_boxes, i)
+            else
+                box.set_right(b, bar_index + fvg_extend)
+
+    if array.size(bear_fvg_boxes) > 0
+        for i = array.size(bear_fvg_boxes) - 1 to 0
+            b = array.get(bear_fvg_boxes, i)
+            if high >= box.get_bottom(b)
+                box.delete(b)
+                array.remove(bear_fvg_boxes, i)
+            else
+                box.set_right(b, bar_index + fvg_extend)
+else
+    if array.size(bull_fvg_boxes) > 0
+        for i = 0 to array.size(bull_fvg_boxes) - 1
+            box.set_right(array.get(bull_fvg_boxes, i), bar_index + fvg_extend)
+    if array.size(bear_fvg_boxes) > 0
+        for i = 0 to array.size(bear_fvg_boxes) - 1
+            box.set_right(array.get(bear_fvg_boxes, i), bar_index + fvg_extend)
+
+// ─── LIQUIDITY LEVELS (EQH / EQL) ────────────────────────────────────────────
+if show_liq
+    // Equal Highs — Buy Side Liquidity
+    is_eqh = math.abs(high - high[liq_len]) / high < 0.002 and
+              high == ta.highest(high, liq_len)
+    if is_eqh
+        line.new(bar_index - liq_len, high, bar_index + 15, high,
+             color=liq_bull_col, width=1, style=line.style_dotted)
+        label.new(bar_index + 15, high, "BSL", style=label.style_label_left,
+             color=color.new(liq_bull_col,80), textcolor=liq_bull_col, size=size.tiny)
+
+    // Equal Lows — Sell Side Liquidity
+    is_eql = math.abs(low - low[liq_len]) / low < 0.002 and
+             low == ta.lowest(low, liq_len)
+    if is_eql
+        line.new(bar_index - liq_len, low, bar_index + 15, low,
+             color=liq_bear_col, width=1, style=line.style_dotted)
+        label.new(bar_index + 15, low, "SSL", style=label.style_label_left,
+             color=color.new(liq_bear_col,80), textcolor=liq_bear_col, size=size.tiny)
+
+// ─── PREMIUM / DISCOUNT ZONES ────────────────────────────────────────────────
+if show_pd
+    range_high = ta.highest(high, pd_len)
+    range_low  = ta.lowest(low,  pd_len)
+    eq_level   = (range_high + range_low) / 2.0
+
+    // 50% equilibrium line
+    line.new(bar_index - 1, eq_level, bar_index, eq_level,
+         color=color.new(#ffffff, 60), width=1, style=line.style_dashed)
+
+    // Premium zone label (above 50%)
+    if close > eq_level * 1.001 and close[1] <= eq_level * 1.001
+        label.new(bar_index, close, "PREMIUM", style=label.style_label_left,
+             color=color.new(#ff1744,80), textcolor=color.white, size=size.tiny)
+
+    // Discount zone label (below 50%)
+    if close < eq_level * 0.999 and close[1] >= eq_level * 0.999
+        label.new(bar_index, close, "DISCOUNT", style=label.style_label_left,
+             color=color.new(#00c853,80), textcolor=color.white, size=size.tiny)
+
+// ─── SESSION KILLZONES ────────────────────────────────────────────────────────
+if show_kz
+    session_hour = hour(time, tz)
+    session_min  = minute(time, tz)
+    t_minutes    = session_hour * 60 + session_min
+
+    // Asia Killzone: 20:00–00:00 NY
+    in_asia = t_minutes >= 1200 or t_minutes < 0
+    // London Killzone: 02:00–05:00 NY
+    in_lon  = t_minutes >= 120 and t_minutes < 300
+    // New York Killzone: 07:00–10:00 NY
+    in_ny   = t_minutes >= 420 and t_minutes < 600
+
+    bgcolor(in_asia ? kz_asia_col : na, title="Asia KZ")
+    bgcolor(in_lon  ? kz_lon_col  : na, title="London KZ")
+    bgcolor(in_ny   ? kz_ny_col   : na, title="NY KZ")
+
+// ─── TABLE LEGEND ─────────────────────────────────────────────────────────────
+var table legend = table.new(position.bottom_right, 2, 10,
+     bgcolor=color.new(#000000,70), border_color=color.new(#ffffff,60), border_width=1, frame_width=1)
+
+if barstate.islast
+    table.cell(legend, 0, 0, "SMC/ICT Suite", text_color=color.white, text_size=size.small,
+         bgcolor=color.new(#263238,0))
+    table.merge_cells(legend, 0, 0, 1, 0)
+
+    rows = array.from("Bull OB","Bear OB","Bull FVG","Bear FVG","BOS Bull","BOS Bear","BSL","SSL","Asia KZ","London KZ")
+    cols = array.from(ob_bull_col, ob_bear_col, fvg_bull_col, fvg_bear_col,
+                      ms_bull_col, ms_bear_col, liq_bull_col, liq_bear_col, kz_asia_col, kz_lon_col)
+    for i = 0 to array.size(rows) - 1
+        table.cell(legend, 0, i + 1, array.get(rows, i),
+             text_color=color.white, text_size=size.tiny, bgcolor=color.new(#263238,20))
+        table.cell(legend, 1, i + 1, "█",
+             text_color=array.get(cols, i), text_size=size.small, bgcolor=color.new(#263238,20))

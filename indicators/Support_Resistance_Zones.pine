@@ -1,0 +1,180 @@
+// This source code is subject to the terms of the Mozilla Public License 2.0
+// © Support_Resistance_Zones — Multi-timeframe S/R with Supply & Demand
+//@version=5
+indicator("S/R Zones — Supply & Demand", overlay=true, max_boxes_count=200, max_lines_count=200, max_labels_count=100)
+
+// ─── INPUTS ───────────────────────────────────────────────────────────────────
+var g_sr  = "Support & Resistance"
+var g_sd  = "Supply & Demand"
+var g_pp  = "Pivot Points"
+var g_htf = "Higher Timeframe Levels"
+
+// S/R
+sr_len      = input.int(20,    "Pivot Lookback",       group=g_sr, minval=5)
+sr_touch    = input.int(2,     "Min Touches",          group=g_sr, minval=1)
+sr_thick    = input.float(0.5, "Zone Thickness %",     group=g_sr, minval=0.1, step=0.1)
+sup_col     = input.color(color.new(#00c853, 75), "Support Zone",  group=g_sr)
+res_col     = input.color(color.new(#ff1744, 75), "Resistance Zone", group=g_sr)
+
+// Supply & Demand
+show_sd     = input.bool(true, "Show Supply/Demand",   group=g_sd)
+sd_lookback = input.int(100,   "Lookback Bars",        group=g_sd, minval=20)
+sd_extend   = input.int(30,    "Extend Bars",          group=g_sd, minval=1)
+supply_col  = input.color(color.new(#ff6d00, 80), "Supply Zone",   group=g_sd)
+demand_col  = input.color(color.new(#00bcd4, 80), "Demand Zone",   group=g_sd)
+
+// Pivot Points (Classic / Camarilla)
+show_pp     = input.bool(true,  "Show Daily Pivots",   group=g_pp)
+pp_type     = input.string("Classic", "Pivot Type",    group=g_pp,
+              options=["Classic","Camarilla","Fibonacci"])
+pp_col      = input.color(color.new(#ffffff, 40), "Pivot Color",   group=g_pp)
+
+// HTF Levels
+show_htf    = input.bool(true,  "Show HTF Levels",     group=g_htf)
+htf_tf      = input.timeframe("D", "HTF Timeframe",   group=g_htf)
+htf_col     = input.color(color.new(#ffd600, 50), "HTF Level Color", group=g_htf)
+
+// ─── SUPPORT & RESISTANCE ZONES ───────────────────────────────────────────────
+pivot_high = ta.pivothigh(high, sr_len, sr_len)
+pivot_low  = ta.pivotlow(low,   sr_len, sr_len)
+
+var float[] ph_levels = array.new<float>()
+var float[] pl_levels = array.new<float>()
+var int[]   ph_count  = array.new<int>()
+var int[]   pl_count  = array.new<int>()
+
+zone_delta(price) => price * sr_thick / 100.0
+
+if not na(pivot_high)
+    // Check if close to existing resistance
+    found = false
+    if array.size(ph_levels) > 0
+        for i = 0 to array.size(ph_levels) - 1
+            if math.abs(array.get(ph_levels, i) - pivot_high) <= zone_delta(pivot_high)
+                array.set(ph_count, i, array.get(ph_count, i) + 1)
+                found := true
+                break
+    if not found
+        array.push(ph_levels, pivot_high)
+        array.push(ph_count,  1)
+
+if not na(pivot_low)
+    found = false
+    if array.size(pl_levels) > 0
+        for i = 0 to array.size(pl_levels) - 1
+            if math.abs(array.get(pl_levels, i) - pivot_low) <= zone_delta(pivot_low)
+                array.set(pl_count, i, array.get(pl_count, i) + 1)
+                found := true
+                break
+    if not found
+        array.push(pl_levels, pivot_low)
+        array.push(pl_count,  1)
+
+// Draw zones on last bar
+if barstate.islast
+    start_bar = bar_index - sr_len * 3
+    // Resistance zones
+    if array.size(ph_levels) > 0
+        for i = 0 to array.size(ph_levels) - 1
+            cnt = array.get(ph_count, i)
+            if cnt >= sr_touch
+                lvl = array.get(ph_levels, i)
+                dz  = zone_delta(lvl)
+                box.new(start_bar, lvl + dz, bar_index + 50, lvl - dz,
+                     bgcolor=res_col, border_color=color.new(#ff1744, 30), border_width=1)
+                label.new(bar_index + 50, lvl, "R × " + str.tostring(cnt),
+                     style=label.style_label_left,
+                     color=color.new(#ff1744,70), textcolor=color.new(#ff1744,0), size=size.tiny)
+
+    // Support zones
+    if array.size(pl_levels) > 0
+        for i = 0 to array.size(pl_levels) - 1
+            cnt = array.get(pl_count, i)
+            if cnt >= sr_touch
+                lvl = array.get(pl_levels, i)
+                dz  = zone_delta(lvl)
+                box.new(start_bar, lvl + dz, bar_index + 50, lvl - dz,
+                     bgcolor=sup_col, border_color=color.new(#00c853, 30), border_width=1)
+                label.new(bar_index + 50, lvl, "S × " + str.tostring(cnt),
+                     style=label.style_label_left,
+                     color=color.new(#00c853,70), textcolor=color.new(#00c853,0), size=size.tiny)
+
+// ─── SUPPLY & DEMAND ZONES ────────────────────────────────────────────────────
+// Supply: bearish engulfing or strong sell candle at highs (price left the zone fast)
+// Demand: bullish engulfing or strong buy candle at lows
+
+if show_sd
+    // Demand zone: strong bullish candle that left a gap upward
+    strong_bull = (close - open) / open > 0.004 and close > close[1] and volume > ta.sma(volume, 20) * 1.2
+    strong_bear = (open - close) / open > 0.004 and close < close[1] and volume > ta.sma(volume, 20) * 1.2
+
+    if strong_bull
+        box.new(bar_index, close, bar_index + sd_extend, open,
+             bgcolor=demand_col, border_color=color.new(#00bcd4, 40), border_width=1)
+        label.new(bar_index, open, "D", style=label.style_label_up,
+             color=color.new(#00bcd4,70), textcolor=color.white, size=size.tiny)
+
+    if strong_bear
+        box.new(bar_index, open, bar_index + sd_extend, close,
+             bgcolor=supply_col, border_color=color.new(#ff6d00, 40), border_width=1)
+        label.new(bar_index, open, "S", style=label.style_label_down,
+             color=color.new(#ff6d00,70), textcolor=color.white, size=size.tiny)
+
+// ─── CLASSIC PIVOT POINTS ─────────────────────────────────────────────────────
+htf_close = request.security(syminfo.tickerid, "D", close[1], lookahead=barmerge.lookahead_on)
+htf_high  = request.security(syminfo.tickerid, "D", high[1],  lookahead=barmerge.lookahead_on)
+htf_low   = request.security(syminfo.tickerid, "D", low[1],   lookahead=barmerge.lookahead_on)
+
+var float pp_val = na
+var float r1 = na
+var float r2 = na
+var float r3 = na
+var float s1 = na
+var float s2 = na
+var float s3 = na
+
+if show_pp
+    if pp_type == "Classic"
+        pp_val := (htf_high + htf_low + htf_close) / 3.0
+        r1 := 2.0 * pp_val - htf_low
+        r2 := pp_val + (htf_high - htf_low)
+        r3 := htf_high + 2.0 * (pp_val - htf_low)
+        s1 := 2.0 * pp_val - htf_high
+        s2 := pp_val - (htf_high - htf_low)
+        s3 := htf_low  - 2.0 * (htf_high - pp_val)
+
+    else if pp_type == "Camarilla"
+        rng = htf_high - htf_low
+        pp_val := (htf_high + htf_low + htf_close) / 3.0
+        r1 := htf_close + rng * 1.1 / 12.0
+        r2 := htf_close + rng * 1.1 / 6.0
+        r3 := htf_close + rng * 1.1 / 4.0
+        s1 := htf_close - rng * 1.1 / 12.0
+        s2 := htf_close - rng * 1.1 / 6.0
+        s3 := htf_close - rng * 1.1 / 4.0
+
+    else  // Fibonacci
+        pp_val := (htf_high + htf_low + htf_close) / 3.0
+        rng = htf_high - htf_low
+        r1 := pp_val + 0.382 * rng
+        r2 := pp_val + 0.618 * rng
+        r3 := pp_val + 1.000 * rng
+        s1 := pp_val - 0.382 * rng
+        s2 := pp_val - 0.618 * rng
+        s3 := pp_val - 1.000 * rng
+
+    plot(pp_val, "PP",  color=pp_col,                           linewidth=2)
+    plot(r1,     "R1",  color=color.new(#ff1744, 30),           linewidth=1)
+    plot(r2,     "R2",  color=color.new(#ff1744, 10),           linewidth=1, style=plot.style_circles)
+    plot(r3,     "R3",  color=color.new(#ff1744,  0),           linewidth=1, style=plot.style_circles)
+    plot(s1,     "S1",  color=color.new(#00c853, 30),           linewidth=1)
+    plot(s2,     "S2",  color=color.new(#00c853, 10),           linewidth=1, style=plot.style_circles)
+    plot(s3,     "S3",  color=color.new(#00c853,  0),           linewidth=1, style=plot.style_circles)
+
+// ─── HTF PREVIOUS HIGH/LOW ────────────────────────────────────────────────────
+if show_htf
+    prev_htf_high = request.security(syminfo.tickerid, htf_tf, high[1], lookahead=barmerge.lookahead_on)
+    prev_htf_low  = request.security(syminfo.tickerid, htf_tf, low[1],  lookahead=barmerge.lookahead_on)
+
+    plot(prev_htf_high, "HTF High", color=htf_col, linewidth=2, style=plot.style_stepline)
+    plot(prev_htf_low,  "HTF Low",  color=htf_col, linewidth=2, style=plot.style_stepline)

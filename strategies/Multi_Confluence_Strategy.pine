@@ -1,0 +1,167 @@
+// This source code is subject to the terms of the Mozilla Public License 2.0
+// © Multi_Confluence_Strategy — Best-of-breed confluence strategy
+//@version=5
+strategy("Multi-Confluence Strategy (SMC + S/R + Momentum)", overlay=true,
+         default_qty_type=strategy.percent_of_equity, default_qty_value=2,
+         initial_capital=10000, commission_type=strategy.commission.percent,
+         commission_value=0.05, slippage=2)
+
+// ─── INPUTS ───────────────────────────────────────────────────────────────────
+// Risk
+risk_pct   = input.float(1.0,  "Risk % per Trade",     minval=0.1, step=0.1, group="Risk")
+rr_min     = input.float(2.0,  "Min R:R",              minval=1.0, step=0.5, group="Risk")
+use_trail  = input.bool(false, "Use Trailing Stop",                           group="Risk")
+
+// Trend
+ema_fast   = input.int(20,   "Fast EMA",   minval=5,    group="Trend")
+ema_slow   = input.int(50,   "Slow EMA",   minval=10,   group="Trend")
+ema_trend  = input.int(200,  "Trend EMA",  minval=50,   group="Trend")
+
+// Momentum
+rsi_len    = input.int(14,   "RSI Length",              group="Momentum")
+stoch_k    = input.int(14,   "Stoch %K",                group="Momentum")
+stoch_d    = input.int(3,    "Stoch %D",                group="Momentum")
+stoch_sm   = input.int(3,    "Stoch Smooth",            group="Momentum")
+
+// Volume
+vwap_sig   = input.bool(true, "VWAP Signal",            group="Volume")
+vol_thresh = input.float(1.5, "Volume Spike ×",         group="Volume", minval=1.0, step=0.1)
+
+// Structure
+sr_len     = input.int(20,   "S/R Pivot Length",        group="Structure")
+atr_sl     = input.float(1.5, "SL ATR Mult",           group="Structure", step=0.25)
+atr_tp     = input.float(3.0, "TP ATR Mult",           group="Structure", step=0.25)
+
+// ─── CALCULATIONS ─────────────────────────────────────────────────────────────
+// EMAs
+f_ema = ta.ema(close, ema_fast)
+s_ema = ta.ema(close, ema_slow)
+t_ema = ta.ema(close, ema_trend)
+
+// Momentum
+rsi       = ta.rsi(close, rsi_len)
+[k, d]    = ta.stoch(close, high, low, stoch_k)
+stoch_val = ta.sma(k, stoch_sm)
+
+// Volume
+vol_avg   = ta.sma(volume, 20)
+vol_spike = volume > vol_avg * vol_thresh
+
+// ATR
+atr = ta.atr(14)
+
+// VWAP
+vwap_val = ta.vwap(hlc3)
+
+// Structure pivots
+ph = ta.pivothigh(high, sr_len, sr_len)
+pl = ta.pivotlow(low,   sr_len, sr_len)
+
+var float last_ph = na
+var float last_pl = na
+if not na(ph) then last_ph := ph
+if not na(pl) then last_pl := pl
+
+// ─── TREND ALIGNMENT ─────────────────────────────────────────────────────────
+bull_trend = f_ema > s_ema and s_ema > t_ema and close > t_ema
+bear_trend = f_ema < s_ema and s_ema < t_ema and close < t_ema
+
+// EMA ribbon crossover momentum
+bull_cross = ta.crossover(f_ema,  s_ema)
+bear_cross = ta.crossunder(f_ema, s_ema)
+
+// ─── MOMENTUM CONFIRMATION ────────────────────────────────────────────────────
+rsi_bull = rsi > 50 and rsi < 70
+rsi_bear = rsi < 50 and rsi > 30
+
+stoch_bull = stoch_val > 20 and stoch_val < 80 and k > d
+stoch_bear = stoch_val < 80 and stoch_val > 20 and k < d
+
+// ─── VWAP ─────────────────────────────────────────────────────────────────────
+above_vwap = close > vwap_val
+below_vwap = close < vwap_val
+
+// ─── STRUCTURE — S/R BOUNCE ───────────────────────────────────────────────────
+near_support    = not na(last_pl) and low  <= last_pl * 1.002 and close > last_pl
+near_resistance = not na(last_ph) and high >= last_ph * 0.998 and close < last_ph
+
+// ─── CONFLUENCE SCORING ───────────────────────────────────────────────────────
+// Score each signal — take trades only on 3+ confluence
+long_score  = (bull_trend ? 1 : 0) +
+              (bull_cross  ? 1 : 0) +
+              (rsi_bull    ? 1 : 0) +
+              (stoch_bull  ? 1 : 0) +
+              (vol_spike   ? 1 : 0) +
+              ((vwap_sig and above_vwap) ? 1 : 0) +
+              (near_support ? 1 : 0)
+
+short_score = (bear_trend ? 1 : 0) +
+              (bear_cross  ? 1 : 0) +
+              (rsi_bear    ? 1 : 0) +
+              (stoch_bear  ? 1 : 0) +
+              (vol_spike   ? 1 : 0) +
+              ((vwap_sig and below_vwap) ? 1 : 0) +
+              (near_resistance ? 1 : 0)
+
+min_score = 3
+
+long_signal  = long_score  >= min_score and strategy.position_size == 0
+short_signal = short_score >= min_score and strategy.position_size == 0
+
+// ─── ENTRIES & EXITS ──────────────────────────────────────────────────────────
+long_sl_p  = close - atr * atr_sl
+long_tp_p  = close + atr * atr_tp
+short_sl_p = close + atr * atr_sl
+short_tp_p = close - atr * atr_tp
+
+if long_signal
+    strategy.entry("Long",  strategy.long)
+    strategy.exit("L-Exit", "Long",  stop=long_sl_p,  limit=long_tp_p,
+         trail_offset=use_trail ? atr * 1.0 / syminfo.mintick : na)
+
+if short_signal
+    strategy.entry("Short", strategy.short)
+    strategy.exit("S-Exit", "Short", stop=short_sl_p, limit=short_tp_p,
+         trail_offset=use_trail ? atr * 1.0 / syminfo.mintick : na)
+
+// ─── PLOTS ────────────────────────────────────────────────────────────────────
+plot(f_ema,   "Fast EMA",  color=color.new(#00e5ff, 30), linewidth=1)
+plot(s_ema,   "Slow EMA",  color=color.new(#ffd600, 30), linewidth=1)
+plot(t_ema,   "Trend EMA", color=color.new(#ff6d00, 20), linewidth=2)
+plot(vwap_sig ? vwap_val : na, "VWAP", color=color.new(#7b1fa2, 30), linewidth=2)
+
+plotshape(long_signal,  "Long",  shape.triangleup,   location.belowbar,
+     color=color.new(#00c853, 0), size=size.small)
+plotshape(short_signal, "Short", shape.triangledown,  location.abovebar,
+     color=color.new(#ff1744, 0), size=size.small)
+
+// Score bars
+hline(0, color=color.new(#ffffff,80))
+
+// ─── INFO TABLE ───────────────────────────────────────────────────────────────
+var table t = table.new(position.top_right, 2, 8,
+     bgcolor=color.new(#000000,70), border_color=color.new(#ffffff,60), border_width=1)
+
+if barstate.islast
+    bull_c = long_score  >= min_score ? color.new(#00c853,60) : color.new(#263238,30)
+    bear_c = short_score >= min_score ? color.new(#ff1744,60) : color.new(#263238,30)
+
+    table.cell(t, 0, 0, "Confluence",     text_color=color.white, text_size=size.small)
+    table.cell(t, 1, 0, "Score",          text_color=color.white, text_size=size.small)
+    table.cell(t, 0, 1, "Long",           text_color=color.white, bgcolor=bull_c, text_size=size.small)
+    table.cell(t, 1, 1, str.tostring(long_score)  + "/7", text_color=color.white, bgcolor=bull_c, text_size=size.small)
+    table.cell(t, 0, 2, "Short",          text_color=color.white, bgcolor=bear_c, text_size=size.small)
+    table.cell(t, 1, 2, str.tostring(short_score) + "/7", text_color=color.white, bgcolor=bear_c, text_size=size.small)
+    table.cell(t, 0, 3, "Trend",          text_color=color.white, text_size=size.tiny)
+    table.cell(t, 1, 3, bull_trend ? "BULL" : bear_trend ? "BEAR" : "NEUTRAL",
+         text_color=bull_trend ? #00c853 : bear_trend ? #ff1744 : #ffd600, text_size=size.tiny)
+    table.cell(t, 0, 4, "RSI",            text_color=color.white, text_size=size.tiny)
+    table.cell(t, 1, 4, str.tostring(math.round(rsi, 1)),
+         text_color=rsi > 70 ? #ff1744 : rsi < 30 ? #00c853 : #ffffff, text_size=size.tiny)
+    table.cell(t, 0, 5, "Stoch",          text_color=color.white, text_size=size.tiny)
+    table.cell(t, 1, 5, str.tostring(math.round(stoch_val, 1)),
+         text_color=stoch_val > 80 ? #ff1744 : stoch_val < 20 ? #00c853 : #ffffff, text_size=size.tiny)
+
+// ─── ALERTS ───────────────────────────────────────────────────────────────────
+alertcondition(long_signal,  "MC Long",  "Multi-Confluence Long Signal (score " + str.tostring(long_score)  + "/7)")
+alertcondition(short_signal, "MC Short", "Multi-Confluence Short Signal (score " + str.tostring(short_score) + "/7)")

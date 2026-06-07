@@ -1,0 +1,162 @@
+// This source code is subject to the terms of the Mozilla Public License 2.0
+// © SMC_ICT_Strategy — Smart Money Concepts Full Strategy (Backtest)
+//@version=5
+strategy("SMC/ICT Strategy", overlay=true, default_qty_type=strategy.percent_of_equity,
+         default_qty_value=2, initial_capital=10000, commission_type=strategy.commission.percent,
+         commission_value=0.05, slippage=2, max_boxes_count=300)
+
+// ─── INPUTS ───────────────────────────────────────────────────────────────────
+var g_entry = "Entry Settings"
+var g_risk  = "Risk Management"
+var g_filt  = "Filters"
+
+// Entry
+swing_len    = input.int(10,    "Swing Lookback",           group=g_entry, minval=3)
+ob_confirm   = input.bool(true, "Require FVG in OB",        group=g_entry)
+use_session  = input.bool(true, "London/NY Session Only",   group=g_entry)
+session_tz   = input.string("America/New_York", "Timezone", group=g_entry,
+               options=["America/New_York","Europe/London","UTC"])
+
+// Risk
+rr_ratio     = input.float(2.0, "Min R:R Ratio",    minval=1.0, step=0.5, group=g_risk)
+sl_atr_mult  = input.float(1.5, "SL ATR Multiplier",minval=0.5, step=0.25, group=g_risk)
+tp_atr_mult  = input.float(3.0, "TP ATR Multiplier",minval=1.0, step=0.25, group=g_risk)
+trail_stop   = input.bool(false,"Trailing Stop",                group=g_risk)
+trail_atr    = input.float(1.0, "Trailing ATR",     minval=0.5, group=g_risk)
+
+// Filters
+ema_filter   = input.bool(true, "EMA Trend Filter",         group=g_filt)
+ema_len      = input.int(200,   "EMA Length",               group=g_filt, minval=20)
+vol_filter   = input.bool(true, "Volume Filter",            group=g_filt)
+vol_mult     = input.float(1.2, "Min Volume Multiplier",    group=g_filt, minval=1.0, step=0.1)
+rsi_filter   = input.bool(true, "RSI Extremes Filter",      group=g_filt)
+rsi_ob       = input.int(70,    "RSI Overbought",           group=g_filt)
+rsi_os       = input.int(30,    "RSI Oversold",             group=g_filt)
+
+// ─── CORE CALCULATIONS ────────────────────────────────────────────────────────
+atr    = ta.atr(14)
+ema200 = ta.ema(close, ema_len)
+rsi    = ta.rsi(close, 14)
+vol_avg = ta.sma(volume, 20)
+
+// ─── MARKET STRUCTURE ─────────────────────────────────────────────────────────
+swing_high = ta.pivothigh(high, swing_len, swing_len)
+swing_low  = ta.pivotlow(low,   swing_len, swing_len)
+
+var float last_sh = na
+var float last_sl = na
+var bool  bull_ms = true
+
+if not na(swing_high)
+    last_sh := swing_high
+if not na(swing_low)
+    last_sl := swing_low
+
+// BOS detection
+bull_bos = not na(last_sh) and close > last_sh and close[1] <= last_sh
+bear_bos = not na(last_sl) and close < last_sl and close[1] >= last_sl
+
+if bull_bos
+    bull_ms := true
+if bear_bos
+    bull_ms := false
+
+// ─── ORDER BLOCK DETECTION ────────────────────────────────────────────────────
+bull_impulse = close > open and close > close[1] and close > close[2]
+bear_impulse = close < open and close < close[1] and close < close[2]
+
+// Bullish OB: last bearish candle before bullish impulse
+bull_ob_hi = float(na)
+bull_ob_lo = float(na)
+if bull_impulse
+    for i = 1 to 5
+        if close[i] < open[i]
+            bull_ob_hi := high[i]
+            bull_ob_lo := low[i]
+            break
+
+// Bearish OB: last bullish candle before bearish impulse
+bear_ob_hi = float(na)
+bear_ob_lo = float(na)
+if bear_impulse
+    for i = 1 to 5
+        if close[i] > open[i]
+            bear_ob_hi := high[i]
+            bear_ob_lo := low[i]
+            break
+
+// ─── FAIR VALUE GAP ───────────────────────────────────────────────────────────
+bull_fvg = low > high[2] and close[1] > high[2]   // price above gap = demand
+bear_fvg = high < low[2] and close[1] < low[2]    // price below gap = supply
+
+// ─── LIQUIDITY SWEEP ──────────────────────────────────────────────────────────
+body      = math.abs(close - open)
+upper_wick = high  - math.max(open, close)
+lower_wick = math.min(open, close) - low
+
+bsl_swept = not na(last_sh) and high > last_sh and close < last_sh and upper_wick > body * 0.5
+ssl_swept = not na(last_sl) and low  < last_sl and close > last_sl and lower_wick > body * 0.5
+
+// ─── SESSION FILTER ───────────────────────────────────────────────────────────
+h = hour(time, session_tz)
+m = minute(time, session_tz)
+t = h * 60 + m
+in_london = t >= 120  and t < 480   // 2am – 8am NY
+in_ny     = t >= 570  and t < 780   // 9:30am – 1pm NY
+in_session = not use_session or (in_london or in_ny)
+
+// ─── ENTRY CONDITIONS ─────────────────────────────────────────────────────────
+// LONG: Bull structure + liquidity swept below + price in demand OB + above EMA200
+long_cond  = bull_ms
+long_cond  := long_cond and ssl_swept[1]              // stop hunt below SSL
+long_cond  := long_cond and not na(bull_ob_lo)         // inside demand OB
+long_cond  := long_cond and (not ob_confirm or bull_fvg) // FVG confirmation
+long_cond  := long_cond and (not ema_filter  or close > ema200)
+long_cond  := long_cond and (not vol_filter  or volume > vol_avg * vol_mult)
+long_cond  := long_cond and (not rsi_filter  or rsi < rsi_ob)
+long_cond  := long_cond and in_session
+long_cond  := long_cond and strategy.position_size == 0
+
+// SHORT: Bear structure + liquidity swept above + price in supply OB + below EMA200
+short_cond  = not bull_ms
+short_cond  := short_cond and bsl_swept[1]
+short_cond  := short_cond and not na(bear_ob_hi)
+short_cond  := short_cond and (not ob_confirm or bear_fvg)
+short_cond  := short_cond and (not ema_filter  or close < ema200)
+short_cond  := short_cond and (not vol_filter  or volume > vol_avg * vol_mult)
+short_cond  := short_cond and (not rsi_filter  or rsi > rsi_os)
+short_cond  := short_cond and in_session
+short_cond  := short_cond and strategy.position_size == 0
+
+// ─── ENTRIES ──────────────────────────────────────────────────────────────────
+long_sl  = close - atr * sl_atr_mult
+long_tp  = close + atr * tp_atr_mult
+short_sl = close + atr * sl_atr_mult
+short_tp = close - atr * tp_atr_mult
+
+if long_cond
+    strategy.entry("Long", strategy.long)
+    strategy.exit("Long Exit", "Long",
+         stop=long_sl, limit=long_tp,
+         trail_offset=trail_stop ? atr * trail_atr / syminfo.mintick : na)
+
+if short_cond
+    strategy.entry("Short", strategy.short)
+    strategy.exit("Short Exit", "Short",
+         stop=short_sl, limit=short_tp,
+         trail_offset=trail_stop ? atr * trail_atr / syminfo.mintick : na)
+
+// ─── PLOTS ────────────────────────────────────────────────────────────────────
+plot(ema200, "EMA 200", color=color.new(#ffd600, 40), linewidth=2)
+
+plotshape(long_cond,  "Long",  shape.triangleup,   location.belowbar,
+     color=color.new(#00c853, 0), size=size.small)
+plotshape(short_cond, "Short", shape.triangledown,  location.abovebar,
+     color=color.new(#ff1744, 0), size=size.small)
+
+bgcolor(in_london ? color.new(#1565c0, 95) : na, title="London Session")
+bgcolor(in_ny     ? color.new(#e65100, 95) : na, title="NY Session")
+
+// ─── ALERTS ───────────────────────────────────────────────────────────────────
+alertcondition(long_cond,  "SMC Long Signal",  "SMC/ICT Long — OB + FVG + Liquidity Sweep")
+alertcondition(short_cond, "SMC Short Signal", "SMC/ICT Short — OB + FVG + Liquidity Sweep")

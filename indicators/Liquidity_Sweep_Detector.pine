@@ -1,0 +1,104 @@
+// This source code is subject to the terms of the Mozilla Public License 2.0
+// © Liquidity_Sweep_Detector — ICT Liquidity Sweeps + Stop Hunt Detection
+//@version=5
+indicator("Liquidity Sweep Detector", overlay=true, max_labels_count=200, max_lines_count=200)
+
+// ─── INPUTS ───────────────────────────────────────────────────────────────────
+sweep_len     = input.int(20,  "Lookback for Swing H/L",  minval=5)
+sweep_wick    = input.float(0.3, "Min Wick Ratio",        minval=0.1, step=0.05,
+               tooltip="Min wick-to-body ratio to qualify as a sweep candle")
+show_bsl      = input.bool(true, "Buy Side Liquidity Sweeps")
+show_ssl      = input.bool(true, "Sell Side Liquidity Sweeps")
+bsl_col       = input.color(color.new(#00c853, 0),  "BSL Color")
+ssl_col       = input.color(color.new(#ff1744, 0),  "SSL Color")
+show_po3      = input.bool(true, "Show Power of 3 (PO3) AMD")
+session_tz    = input.string("America/New_York", "Session Timezone",
+               options=["America/New_York","Europe/London","UTC"])
+
+// ─── SWING HIGH / LOW ─────────────────────────────────────────────────────────
+swing_h = ta.pivothigh(high, sweep_len, sweep_len)
+swing_l = ta.pivotlow(low,   sweep_len, sweep_len)
+
+var float prev_swing_h = na
+var float prev_swing_l = na
+var int   prev_sh_bar  = na
+var int   prev_sl_bar  = na
+
+if not na(swing_h)
+    prev_swing_h := swing_h
+    prev_sh_bar  := bar_index - sweep_len
+
+if not na(swing_l)
+    prev_swing_l := swing_l
+    prev_sl_bar  := bar_index - sweep_len
+
+// ─── LIQUIDITY SWEEP DETECTION ────────────────────────────────────────────────
+// BSL Sweep: wick above previous swing high, close back below it
+upper_wick  = high  - math.max(open, close)
+lower_wick  = math.min(open, close) - low
+body_size   = math.abs(close - open)
+
+bsl_sweep = show_bsl and not na(prev_swing_h) and
+            high > prev_swing_h and close < prev_swing_h and
+            upper_wick > body_size * sweep_wick
+
+ssl_sweep = show_ssl and not na(prev_swing_l) and
+            low < prev_swing_l and close > prev_swing_l and
+            lower_wick > body_size * sweep_wick
+
+if bsl_sweep
+    line.new(prev_sh_bar, prev_swing_h, bar_index, prev_swing_h,
+         color=bsl_col, width=1, style=line.style_dashed)
+    label.new(bar_index, high, "🔫 BSL Sweep",
+         style=label.style_label_down, color=color.new(bsl_col, 70),
+         textcolor=bsl_col, size=size.small)
+
+if ssl_sweep
+    line.new(prev_sl_bar, prev_swing_l, bar_index, prev_swing_l,
+         color=ssl_col, width=1, style=line.style_dashed)
+    label.new(bar_index, low, "🔫 SSL Sweep",
+         style=label.style_label_up, color=color.new(ssl_col, 70),
+         textcolor=ssl_col, size=size.small)
+
+// ─── POWER OF 3 — ACCUMULATION / MANIPULATION / DISTRIBUTION ─────────────────
+// PO3 concept: Asia session = Accumulation, London = Manipulation (liquidity grab),
+//              New York = Distribution (true move)
+
+if show_po3
+    h = hour(time, session_tz)
+    m = minute(time, session_tz)
+    t = h * 60 + m
+
+    // Asia session range (20:00 – 00:00 NY): accumulation
+    is_asia_open  = t == 1200  // 8pm NY = 20:00
+    // London open (02:00 NY): manipulation starts
+    is_lon_open   = t == 120
+    // NY open (09:30 NY): distribution
+    is_ny_open    = t == 570   // 9:30am
+
+    if is_asia_open
+        label.new(bar_index, high, "ACCUM", style=label.style_label_down,
+             color=color.new(#7b1fa2, 60), textcolor=color.white, size=size.tiny)
+
+    if is_lon_open
+        label.new(bar_index, high, "MANIP", style=label.style_label_down,
+             color=color.new(#e65100, 60), textcolor=color.white, size=size.tiny)
+
+    if is_ny_open
+        label.new(bar_index, low, "DIST", style=label.style_label_up,
+             color=color.new(#1565c0, 60), textcolor=color.white, size=size.tiny)
+
+// ─── PREVIOUS DAY HIGH/LOW (KEY LIQUIDITY) ────────────────────────────────────
+prev_day_h = request.security(syminfo.tickerid, "D", high[1],  lookahead=barmerge.lookahead_on)
+prev_day_l = request.security(syminfo.tickerid, "D", low[1],   lookahead=barmerge.lookahead_on)
+prev_wk_h  = request.security(syminfo.tickerid, "W", high[1],  lookahead=barmerge.lookahead_on)
+prev_wk_l  = request.security(syminfo.tickerid, "W", low[1],   lookahead=barmerge.lookahead_on)
+
+plot(prev_day_h, "PDH", color=color.new(#ffd600, 30), linewidth=1, style=plot.style_stepline)
+plot(prev_day_l, "PDL", color=color.new(#ffd600, 30), linewidth=1, style=plot.style_stepline)
+plot(prev_wk_h,  "PWH", color=color.new(#ff6d00, 30), linewidth=2, style=plot.style_stepline)
+plot(prev_wk_l,  "PWL", color=color.new(#ff6d00, 30), linewidth=2, style=plot.style_stepline)
+
+// Sweep alerts
+alertcondition(bsl_sweep, "BSL Sweep", "Buy-Side Liquidity Swept — possible short setup")
+alertcondition(ssl_sweep, "SSL Sweep", "Sell-Side Liquidity Swept — possible long setup")
