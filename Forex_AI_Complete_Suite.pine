@@ -1,7 +1,7 @@
 // This source code is subject to the terms of the Mozilla Public License 2.0
 // © Forex AI Complete Suite — All-in-One: SMC + ICT + S/R + Liquidity + Sessions + AI Brain
 // One paste. Everything on your chart.
-//@version=5
+//@version=6
 indicator("Forex AI Complete Suite", overlay=true,
           max_boxes_count=500, max_lines_count=500, max_labels_count=500,
           max_bars_back=500)
@@ -196,8 +196,10 @@ if show_bos
         label.new(bar_index, last_pl, _lbl, style=label.style_label_left,
              color=color.new(c_bear, 60), textcolor=c_white, size=size.small)
 
-if bull_bos or bull_choch then bull_ms := true
-if bear_bos or bear_choch then bull_ms := false
+if bull_bos or bull_choch
+    bull_ms := true
+if bear_bos or bear_choch
+    bull_ms := false
 
 // Trend state string
 curr_bull   = ema20 > ema50 and ema50 > ema200
@@ -370,12 +372,11 @@ if show_sweeps
              style=label.style_label_up, color=color.new(c_bear, 65),
              textcolor=c_bear, size=size.small)
 
-// Previous Day / Week levels
-if show_levels
-    plot(pdh, "PDH", color=color.new(c_gold, 35), linewidth=1, style=plot.style_stepline)
-    plot(pdl, "PDL", color=color.new(c_gold, 35), linewidth=1, style=plot.style_stepline)
-    plot(pwh, "PWH", color=color.new(c_ny,   30), linewidth=2, style=plot.style_stepline)
-    plot(pwl, "PWL", color=color.new(c_ny,   30), linewidth=2, style=plot.style_stepline)
+// Previous Day / Week levels  (plot() must be at global scope — use na when hidden)
+plot(show_levels ? pdh : na, "PDH", color=color.new(c_gold, 35), linewidth=1, style=plot.style_stepline)
+plot(show_levels ? pdl : na, "PDL", color=color.new(c_gold, 35), linewidth=1, style=plot.style_stepline)
+plot(show_levels ? pwh : na, "PWH", color=color.new(c_ny,   30), linewidth=2, style=plot.style_stepline)
+plot(show_levels ? pwl : na, "PWL", color=color.new(c_ny,   30), linewidth=2, style=plot.style_stepline)
 
 // ══════════════════════════════════════════════════════════════════════════════
 //  MODULE 8 — SESSION KILLZONES
@@ -477,10 +478,8 @@ vol_ok    = not use_vol_filt or volume > vol_avg * 0.8
 htf_l_ok  = not use_htf or htf_bull
 htf_s_ok  = not use_htf or htf_bear
 
-long_fire  = l_sc >= min_score and sess_ok and htf_l_ok and vol_ok and
-             close > ema200 and strategy.position_size == 0
-short_fire = s_sc >= min_score and sess_ok and htf_s_ok and vol_ok and
-             close < ema200 and strategy.position_size == 0
+long_fire  = l_sc >= min_score and sess_ok and htf_l_ok and vol_ok and close > ema200
+short_fire = s_sc >= min_score and sess_ok and htf_s_ok and vol_ok and close < ema200
 
 bias = l_sc > s_sc ? "BULLISH" : s_sc > l_sc ? "BEARISH" : "NEUTRAL"
 
