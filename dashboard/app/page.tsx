@@ -3,6 +3,7 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import dynamic from 'next/dynamic'
 import AIPanel from '@/components/AIPanel'
 import StrengthMeter from '@/components/StrengthMeter'
+import StrategyFeed from '@/components/StrategyFeed'
 import { analyseMarket, type Candle, type AIAnalysis } from '@/lib/indicators'
 
 const TradingChart = dynamic(() => import('@/components/TradingChart'), { ssr: false })
@@ -24,6 +25,7 @@ export default function Dashboard() {
   const [account,    setAccount]    = useState(10000)
   const [riskPct,    setRiskPct]    = useState(1.0)
   const [lastUpdate, setLastUpdate] = useState('')
+  const [customSig,  setCustomSig]  = useState({ bullish: 0, bearish: 0 })
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const timerRef = useRef<any>(null)
 
@@ -60,7 +62,15 @@ export default function Dashboard() {
     return () => { if (timerRef.current) clearInterval(timerRef.current) }
   }, [fetchCandles])
 
-  const biasCol = analysis?.bias === 'BULLISH' ? '#00c853' : analysis?.bias === 'BEARISH' ? '#ff1744' : '#ffd600'
+  // Merge custom strategy sentiment into bias display
+  const effectiveBias = (() => {
+    if (!analysis) return null
+    const aiL = analysis.longScore, aiS = analysis.shortScore
+    const cL = aiL + customSig.bullish, cS = aiS + customSig.bearish
+    return cL > cS ? 'BULLISH' : cS > cL ? 'BEARISH' : 'NEUTRAL'
+  })()
+
+  const biasCol = effectiveBias === 'BULLISH' ? '#00c853' : effectiveBias === 'BEARISH' ? '#ff1744' : '#ffd600'
 
   return (
     <div style={{ display:'flex', flexDirection:'column', height:'100vh', background:'#0d1117' }}>
@@ -71,7 +81,6 @@ export default function Dashboard() {
 
         <span style={{ color:'#58a6ff', fontWeight:800, fontSize:14, marginRight:4 }}>🤖 FOREX AI</span>
 
-        {/* Pair buttons */}
         {PAIRS.map(p => (
           <button key={p} onClick={() => setPair(p)} style={{
             padding:'3px 8px', fontSize:11, fontWeight:600, borderRadius:4,
@@ -81,7 +90,6 @@ export default function Dashboard() {
           }}>{p}</button>
         ))}
 
-        {/* Interval buttons */}
         <div style={{ display:'flex', gap:3, marginLeft:4 }}>
           {INTERVALS.map(iv => (
             <button key={iv} onClick={() => setInterval(iv)} style={{
@@ -93,7 +101,6 @@ export default function Dashboard() {
           ))}
         </div>
 
-        {/* Risk */}
         <div style={{ display:'flex', gap:8, alignItems:'center', marginLeft:'auto' }}>
           <label style={{ fontSize:10, color:'#8b949e', display:'flex', alignItems:'center', gap:4 }}>
             Account $
@@ -118,10 +125,12 @@ export default function Dashboard() {
           fontFamily:'inherit', opacity: loading ? 0.5 : 1,
         }}>{loading ? '⟳ …' : '⟳ Refresh'}</button>
 
-        {analysis && (
+        {effectiveBias && (
           <div style={{ padding:'3px 10px', borderRadius:4, fontSize:11, fontWeight:700,
             background: biasCol + '22', border:`1px solid ${biasCol}44`, color: biasCol }}>
-            {analysis.bias}
+            {effectiveBias}
+            {customSig.bullish + customSig.bearish > 0 &&
+              <span style={{ fontSize:9, marginLeft:4, opacity:0.7 }}>+custom</span>}
           </div>
         )}
 
@@ -158,6 +167,7 @@ export default function Dashboard() {
           <AIPanel analysis={analysis} loading={loading && !analysis}
             pair={pair} account={account} riskPct={riskPct} pipSize={pipSize} />
           <StrengthMeter strength={strength} />
+          <StrategyFeed onSignalsChange={setCustomSig} />
         </div>
       </div>
 
@@ -165,7 +175,7 @@ export default function Dashboard() {
       <div style={{ padding:'3px 12px', background:'#161b22',
         borderTop:'1px solid #30363d', fontSize:9, color:'#444d56',
         display:'flex', justifyContent:'space-between', flexShrink:0 }}>
-        <span>Forex AI · SMC + ICT + Confluence · Data: Yahoo Finance · Auto-refresh 60s</span>
+        <span>Forex AI · SMC + ICT + Strategy Feed · Data: Yahoo Finance · Auto-refresh 60s</span>
         <span>Educational use only — not financial advice</span>
       </div>
     </div>
