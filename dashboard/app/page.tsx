@@ -9,79 +9,60 @@ import { analyseMarket, type Candle, type AIAnalysis } from '@/lib/indicators'
 const TradingChart = dynamic(() => import('@/components/TradingChart'), { ssr: false })
 
 const PAIR_GROUPS = [
-  {
-    label: 'FX',
-    color: '#58a6ff',
-    bg: '#0d2137',
-    pairs: ['EURUSD','GBPUSD','AUDUSD','NZDUSD','USDJPY','USDCHF','USDCAD','GBPJPY','EURJPY','EURCAD'],
-  },
-  {
-    label: 'METALS',
-    color: '#ffd600',
-    bg: '#332600',
-    pairs: ['XAUUSD','XAGUSD'],
-  },
-  {
-    label: 'CRYPTO',
-    color: '#ff9800',
-    bg: '#331a00',
-    pairs: ['BTCUSD','ETHUSD'],
-  },
+  { label:'FX',     color:'#58a6ff', pairs:['EURUSD','GBPUSD','AUDUSD','NZDUSD','USDJPY','USDCHF','USDCAD','GBPJPY','EURJPY','EURCAD'] },
+  { label:'METALS', color:'#ffd600', pairs:['XAUUSD','XAGUSD'] },
+  { label:'CRYPTO', color:'#ff9800', pairs:['BTCUSD','ETHUSD'] },
 ]
-const ALL_PAIRS = PAIR_GROUPS.flatMap(g => g.pairs)
 const INTERVALS = ['1m','5m','15m','30m','1h','4h','1d']
-
 const PIP: Record<string,number> = {
   USDJPY:0.01, GBPJPY:0.01, EURJPY:0.01, CADJPY:0.01, AUDJPY:0.01,
-  XAUUSD:0.1,  XAGUSD:0.001,
-  BTCUSD:1.0,  ETHUSD:0.1,
+  XAUUSD:0.1, XAGUSD:0.001, BTCUSD:1.0, ETHUSD:0.1,
 }
-
 const PAIR_LABEL: Record<string,string> = {
-  XAUUSD:'XAU/USD  Gold',
-  XAGUSD:'XAG/USD  Silver',
-  BTCUSD:'BTC/USD  Bitcoin',
-  ETHUSD:'ETH/USD  Ethereum',
+  XAUUSD:'XAU/USD  Gold', XAGUSD:'XAG/USD  Silver',
+  BTCUSD:'BTC/USD  Bitcoin', ETHUSD:'ETH/USD  Ethereum',
 }
-
 function getPairGroup(pair: string) {
   return PAIR_GROUPS.find(g => g.pairs.includes(pair)) ?? PAIR_GROUPS[0]
 }
-
 function fmtPrice(pair: string, price: number): string {
   if (['BTCUSD','ETHUSD','XAUUSD'].includes(pair)) return price.toFixed(2)
-  if (['XAGUSD'].includes(pair)) return price.toFixed(3)
+  if (pair === 'XAGUSD') return price.toFixed(3)
   if (['USDJPY','GBPJPY','EURJPY'].includes(pair)) return price.toFixed(3)
   return price.toFixed(5)
 }
 
-const REFRESH_SEC = 300 // 5 minutes
+const REFRESH_SEC = 300
 
 export default function Dashboard() {
-  const [pair,      setPair]      = useState('EURUSD')
-  const [interval,  setInterval]  = useState('1h')
-  const [candles,   setCandles]   = useState<Candle[]>([])
-  const [analysis,  setAnalysis]  = useState<AIAnalysis | null>(null)
-  const [strength,  setStrength]  = useState<Record<string,number>>({USD:50,EUR:50,GBP:50,JPY:50,CHF:50,AUD:50,NZD:50,CAD:50})
-  const [loading,   setLoading]   = useState(false)
-  const [error,     setError]     = useState('')
-  const [account,   setAccount]   = useState(10000)
-  const [riskPct,   setRiskPct]   = useState(1.0)
-  const [lastUpdate,setLastUpdate]= useState('')
-  const [customSig, setCustomSig] = useState({ bullish:0, bearish:0 })
-  const [countdown, setCountdown] = useState(REFRESH_SEC)
+  const [pair,       setPair]       = useState('EURUSD')
+  const [interval,   setInterval]   = useState('1h')
+  const [candles,    setCandles]    = useState<Candle[]>([])
+  const [analysis,   setAnalysis]   = useState<AIAnalysis | null>(null)
+  const [strength,   setStrength]   = useState<Record<string,number>>({USD:50,EUR:50,GBP:50,JPY:50,CHF:50,AUD:50,NZD:50,CAD:50})
+  const [loading,    setLoading]    = useState(false)
+  const [error,      setError]      = useState('')
+  const [account,    setAccount]    = useState(10000)
+  const [riskPct,    setRiskPct]    = useState(1.0)
+  const [lastUpdate, setLastUpdate] = useState('')
+  const [customSig,  setCustomSig]  = useState({ bullish:0, bearish:0 })
+  const [countdown,  setCountdown]  = useState(REFRESH_SEC)
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const timerRef = useRef<any>(null)
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const cdRef    = useRef<any>(null)
 
-  const pipSize = PIP[pair] ?? 0.0001
+  const pipSize   = PIP[pair] ?? 0.0001
   const pairGroup = getPairGroup(pair)
 
   const startCountdown = useCallback(() => {
     if (cdRef.current) clearInterval(cdRef.current)
     setCountdown(REFRESH_SEC)
-    cdRef.current = setInterval(() => setCountdown(c => c <= 1 ? REFRESH_SEC : c - 1), 1000)
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    cdRef.current = (window.setInterval as any)(
+      () => setCountdown((c: number) => c <= 1 ? REFRESH_SEC : c - 1),
+      1000
+    )
   }, [])
 
   const fetchCandles = useCallback(async () => {
@@ -100,7 +81,7 @@ export default function Dashboard() {
 
   const fetchStrength = useCallback(async () => {
     try {
-      const res = await fetch('/api/strength')
+      const res  = await fetch('/api/strength')
       const data = await res.json()
       if (data.strength) setStrength(data.strength)
     } catch { /* keep stale */ }
@@ -110,7 +91,8 @@ export default function Dashboard() {
 
   useEffect(() => {
     if (timerRef.current) clearInterval(timerRef.current)
-    timerRef.current = setInterval(fetchCandles, REFRESH_SEC * 1000)
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    timerRef.current = (window.setInterval as any)(fetchCandles, REFRESH_SEC * 1000)
     return () => { if (timerRef.current) clearInterval(timerRef.current) }
   }, [fetchCandles])
 
@@ -131,33 +113,30 @@ export default function Dashboard() {
   return (
     <div style={{ display:'flex', flexDirection:'column', height:'100vh', background:'#0d1117' }}>
 
-      {/* ── Nav row 1: logo + pairs ── */}
+      {/* Row 1 — Logo + Pairs */}
       <nav style={{ display:'flex', alignItems:'center', gap:8, padding:'5px 12px',
-        background:'linear-gradient(180deg, #1a2030 0%, #161b22 100%)',
+        background:'linear-gradient(180deg,#1a2030 0%,#161b22 100%)',
         borderBottom:'1px solid #30363d', flexShrink:0, flexWrap:'wrap' }}>
 
-        {/* Logo */}
         <div style={{ display:'flex', alignItems:'center', gap:6, marginRight:4 }}>
-          <div style={{ width:24, height:24, borderRadius:6, background:'linear-gradient(135deg,#58a6ff,#7b68ee)',
+          <div style={{ width:24, height:24, borderRadius:6,
+            background:'linear-gradient(135deg,#58a6ff,#7b68ee)',
             display:'flex', alignItems:'center', justifyContent:'center', fontSize:13 }}>🤖</div>
           <span style={{ color:'#e6edf3', fontWeight:900, fontSize:13, letterSpacing:'0.04em' }}>FOREX AI</span>
         </div>
 
         <div className="nav-divider" />
 
-        {/* Pair groups */}
         {PAIR_GROUPS.map(group => (
           <div key={group.label} style={{ display:'flex', alignItems:'center', gap:3 }}>
-            <span className="cat-label" style={{ color: group.color }}>{group.label}</span>
+            <span className="cat-label" style={{ color:group.color }}>{group.label}</span>
             {group.pairs.map(p => (
-              <button key={p} className="btn-pair" onClick={() => setPair(p)}
-                style={{
-                  background: pair === p ? group.color : '#21262d',
-                  color:      pair === p ? '#0d1117'   : '#8b949e',
-                  boxShadow:  pair === p ? `0 0 8px ${group.color}60` : 'none',
-                }}>
-                {p === 'XAUUSD' ? '🥇 GOLD' : p === 'XAGUSD' ? '🥈 SILVER' :
-                 p === 'BTCUSD' ? '₿ BTC'  : p === 'ETHUSD'  ? 'Ξ ETH'   : p}
+              <button key={p} className="btn-pair" onClick={() => setPair(p)} style={{
+                background: pair===p ? group.color : '#21262d',
+                color:      pair===p ? '#0d1117'   : '#8b949e',
+                boxShadow:  pair===p ? `0 0 8px ${group.color}60` : 'none',
+              }}>
+                {p==='XAUUSD'?'🥇 GOLD':p==='XAGUSD'?'🥈 SILVER':p==='BTCUSD'?'₿ BTC':p==='ETHUSD'?'Ξ ETH':p}
               </button>
             ))}
           </div>
@@ -165,33 +144,29 @@ export default function Dashboard() {
 
         <div className="nav-divider" />
 
-        {/* Current price */}
         {currentPrice && (
-          <div style={{ fontSize:12, fontWeight:800, color: pairGroup.color, minWidth:80,
-            textShadow:`0 0 12px ${pairGroup.color}60` }}>
+          <div style={{ fontSize:13, fontWeight:900, color:pairGroup.color,
+            textShadow:`0 0 12px ${pairGroup.color}60`, minWidth:80 }}>
             {fmtPrice(pair, currentPrice)}
           </div>
         )}
       </nav>
 
-      {/* ── Nav row 2: intervals + controls ── */}
+      {/* Row 2 — Intervals + Controls */}
       <div style={{ display:'flex', alignItems:'center', gap:8, padding:'4px 12px',
         background:'#161b22', borderBottom:'1px solid #21262d', flexShrink:0, flexWrap:'wrap' }}>
 
-        {/* Intervals */}
         <div style={{ display:'flex', gap:2 }}>
           {INTERVALS.map(iv => (
-            <button key={iv} className="btn-interval" onClick={() => setInterval(iv)}
-              style={{
-                background: interval === iv ? '#30363d' : 'transparent',
-                color:      interval === iv ? '#e6edf3'  : '#8b949e',
-              }}>{iv}</button>
+            <button key={iv} className="btn-interval" onClick={() => setInterval(iv)} style={{
+              background: interval===iv ? '#30363d' : 'transparent',
+              color:      interval===iv ? '#e6edf3'  : '#8b949e',
+            }}>{iv}</button>
           ))}
         </div>
 
         <div className="nav-divider" />
 
-        {/* Account & Risk */}
         <label style={{ fontSize:10, color:'#8b949e', display:'flex', alignItems:'center', gap:4 }}>
           Account $
           <input type="number" value={account} onChange={e => setAccount(+e.target.value)}
@@ -206,30 +181,23 @@ export default function Dashboard() {
 
         <div className="nav-divider" />
 
-        {/* Refresh */}
         <button className="btn-action" onClick={fetchCandles} disabled={loading}>
           {loading ? '⟳ Loading…' : '⟳ Refresh'}
         </button>
 
-        {/* Bias badge */}
         {effectiveBias && (
           <div style={{ padding:'3px 12px', borderRadius:5, fontSize:11, fontWeight:800,
-            background: biasCol + '18', border:`1px solid ${biasCol}50`, color: biasCol,
+            background:biasCol+'18', border:`1px solid ${biasCol}50`, color:biasCol,
             letterSpacing:'0.06em', boxShadow:`0 0 12px ${biasCol}20` }}>
-            {effectiveBias === 'BULLISH' ? '▲' : effectiveBias === 'BEARISH' ? '▼' : '●'} {effectiveBias}
-            {customSig.bullish + customSig.bearish > 0 &&
+            {effectiveBias==='BULLISH'?'▲':effectiveBias==='BEARISH'?'▼':'●'} {effectiveBias}
+            {(customSig.bullish+customSig.bearish)>0 &&
               <span style={{ fontSize:8, marginLeft:5, opacity:0.6 }}>+strat</span>}
           </div>
         )}
 
-        {/* Countdown + last update */}
-        <div style={{ marginLeft:'auto', display:'flex', alignItems:'center', gap:8 }}>
-          {lastUpdate && (
-            <span style={{ fontSize:9, color:'#444d56' }}>Updated {lastUpdate}</span>
-          )}
-          <div className="countdown" title="Next auto-refresh">
-            ⟳ {cdMM}:{cdSS}
-          </div>
+        <div style={{ marginLeft:'auto', display:'flex', alignItems:'center', gap:10 }}>
+          {lastUpdate && <span style={{ fontSize:9, color:'#444d56' }}>Updated {lastUpdate}</span>}
+          <div className="countdown" title="Next auto-refresh">⟳ {cdMM}:{cdSS}</div>
         </div>
       </div>
 
@@ -240,39 +208,34 @@ export default function Dashboard() {
         </div>
       )}
 
-      {/* ── Body ── */}
+      {/* Body */}
       <div style={{ display:'flex', flex:1, overflow:'hidden', gap:6, padding:6 }}>
-
-        {/* Chart */}
         <div style={{ flex:1, minWidth:0, border:`1px solid ${pairGroup.color}30`,
           borderRadius:8, overflow:'hidden', background:'#0d1117',
-          boxShadow:`0 0 20px ${pairGroup.color}08`, transition:'border-color 0.3s, box-shadow 0.3s' }}>
+          boxShadow:`0 0 20px ${pairGroup.color}08`, transition:'border-color 0.3s,box-shadow 0.3s' }}>
           {candles.length > 0
-            ? <TradingChart candles={candles} pair={`${PAIR_LABEL[pair] ?? pair}  ·  ${interval}`} />
+            ? <TradingChart candles={candles} pair={`${PAIR_LABEL[pair]??pair}  ·  ${interval}`} />
             : <div style={{ display:'flex', alignItems:'center', justifyContent:'center',
                 height:'100%', color:'#8b949e', fontSize:12, flexDirection:'column', gap:8 }}>
                 {loading
-                  ? <><div className="skeleton" style={{ width:120, height:12 }} />
-                     <span className="animate-pulse" style={{ fontSize:11, color:'#444d56' }}>Loading {pair}…</span></>
-                  : <><span style={{ fontSize:24 }}>📊</span><span>Select a pair and click Refresh</span></>}
+                  ? <><div className="skeleton" style={{width:120,height:12}} />
+                     <span className="animate-pulse" style={{fontSize:11,color:'#444d56'}}>Loading {pair}…</span></>
+                  : <><span style={{fontSize:24}}>📊</span><span>Select a pair and click Refresh</span></>}
               </div>}
         </div>
 
-        {/* Sidebar */}
         <div style={{ width:280, display:'flex', flexDirection:'column', gap:6, overflowY:'auto', flexShrink:0 }}>
           <AIPanel analysis={analysis} loading={loading && !analysis}
-            pair={PAIR_LABEL[pair] ?? pair} account={account} riskPct={riskPct} pipSize={pipSize} />
+            pair={PAIR_LABEL[pair]??pair} account={account} riskPct={riskPct} pipSize={pipSize} />
           <StrengthMeter strength={strength} />
           <StrategyFeed candles={candles} onSignalsChange={setCustomSig} />
         </div>
       </div>
 
-      {/* Footer */}
       <div style={{ padding:'3px 14px', background:'#161b22', borderTop:'1px solid #21262d',
-        fontSize:9, color:'#444d56', display:'flex', justifyContent:'space-between',
-        alignItems:'center', flexShrink:0 }}>
+        fontSize:9, color:'#444d56', display:'flex', justifyContent:'space-between', alignItems:'center', flexShrink:0 }}>
         <span>Forex AI · SMC + ICT · Forex / Metals / Crypto · Backtest ≥ 72% WR · Auto-refresh 5 min</span>
-        <span style={{ color:'#30363d' }}>Educational use only — not financial advice</span>
+        <span style={{color:'#30363d'}}>Educational use only — not financial advice</span>
       </div>
     </div>
   )
