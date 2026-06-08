@@ -1,315 +1,306 @@
 'use client'
-import { useState, useEffect, useRef } from 'react'
-import { runBacktest, evalForwardSignal, type BacktestResult, type ForwardTrade } from '@/lib/strategyBacktest'
-import { CollapsiblePanel } from '@/components/AIPanel'
-import type { Candle } from '@/lib/indicators'
+import { useState, useEffect } from 'react'
+import { CollapsiblePanel } from './AIPanel'
+import { type Candle } from '@/lib/indicators'
+import { runBacktest, evalForwardSignal, type BacktestResult } from '@/lib/strategyBacktest'
 
 interface Strategy {
   id: string
-  title: string
-  source: string
-  type: 'url' | 'pdf' | 'text'
-  content: string
-  active: boolean
+  name: string
+  text: string
+  source: 'paste' | 'url' | 'pdf'
   addedAt: number
-  bullish: number
-  bearish: number
-  btStatus: 'pending' | 'running' | 'passed' | 'failed' | 'no_rules'
-  bt?: BacktestResult
-  btDate?: number
-  fwTrades: ForwardTrade[]
-  fwWinRate?: number
+  backtest: BacktestResult | null
+  testing: boolean
+  forwardWins: number
+  forwardLosses: number
+  forwardActive: boolean
+  lastSignal: 'long' | 'short' | null
 }
 
-export interface StrategySignal { bullish: number; bearish: number }
-
-const BULL = ['buy','long','bullish','uptrend','support','breakout','demand','rally','higher high']
-const BEAR = ['sell','short','bearish','downtrend','resistance','breakdown','supply','decline','lower low']
-function kwScore(text: string) {
-  const t = text.toLowerCase()
-  return {
-    bullish: BULL.reduce((n,w) => n + (t.split(w).length-1), 0),
-    bearish: BEAR.reduce((n,w) => n + (t.split(w).length-1), 0),
-  }
-}
-
-const STATUS_COLOR = { passed:'#00c853', failed:'#ff1744', pending:'#ffd600', running:'#58a6ff', no_rules:'#8b949e' }
-const STATUS_LABEL = { passed:'PASS ✔', failed:'FAIL ✖', pending:'PENDING', running:'TESTING…', no_rules:'NO RULES' }
-
-export default function StrategyFeed({
-  candles, onSignalsChange,
-}: {
+interface Props {
   candles: Candle[]
-  onSignalsChange?: (s: StrategySignal) => void
-}) {
-  const [strategies, setStrategies] = useState<Strategy[]>([])
-  const [tab,     setTab]    = useState<'url'|'text'|'pdf'>('text')
-  const [urlVal,  setUrl]    = useState('')
-  const [txtVal,  setTxt]    = useState('')
-  const [title,   setTitle]  = useState('')
-  const [loading, setLoading] = useState(false)
-  const [error,   setError]   = useState('')
-  const [expanded,setExp]     = useState<string|null>(null)
-  const fileRef = useRef<HTMLInputElement>(null)
+  pipSize: number
+}
 
+const STORAGE_KEY = 'fx_strats_v3'
+
+function newId() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 6) }
+
+export default function StrategyFeed({ candles, pipSize }: Props) {
+  const [strategies, setStrategies] = useState<Strategy[]>([])
+  const [tab, setTab] = useState<'paste' | 'url' | 'pdf'>('paste')
+  const [text,  setText]  = useState('')
+  const [url,   setUrl]   = useState('')
+  const [name,  setName]  = useState('')
+  const [busy,  setBusy]  = useState(false)
+  const [error, setError] = useState('')
+
+  // Load from localStorage
   useEffect(() => {
-    try { const s = localStorage.getItem('fx_strats_v2'); if (s) setStrategies(JSON.parse(s)) } catch {}
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY)
+      if (raw) setStrategies(JSON.parse(raw))
+    } catch { /* ignore */ }
   }, [])
 
-  // Forward-test resolution on each candle update
-  useEffect(() => {
-    if (candles.length < 30 || strategies.length === 0) return
-    const currentPrice = candles[candles.length-1].close
-    const now = Date.now()
-    const updated = strategies.map(s => {
-      if (!s.active || s.btStatus !== 'passed') return s
-      const HOLD_MS = 5 * 60 * 60 * 1000
-      const resolved = s.fwTrades.map(t => {
-        if (t.outcome !== 'pending') return t
-        if (now - t.timestamp < HOLD_MS) return t
-        const won = t.direction==='long' ? currentPrice>t.entryPrice : currentPrice<t.entryPrice
-        return { ...t, outcome: won ? 'win' as const : 'loss' as const, exitPrice: currentPrice }
-      })
-      const sig = evalForwardSignal(candles, s.content)
-      const alreadyOpen = resolved.some(t => t.outcome==='pending')
-      const newTrades = (!alreadyOpen && sig)
-        ? [...resolved, { timestamp:now, direction:sig, entryPrice:currentPrice, outcome:'pending' as const }]
-        : resolved
-      const settled = newTrades.filter(t => t.outcome!=='pending')
-      const fwWinRate = settled.length>=3 ? (settled.filter(t=>t.outcome==='win').length/settled.length)*100 : undefined
-      const autoFail  = fwWinRate!==undefined && fwWinRate<40 && settled.length>=10
-      return { ...s, fwTrades:newTrades.slice(-50), fwWinRate, active: autoFail ? false : s.active }
-    })
-    persist(updated)
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [candles])
-
-  const persist = (list: Strategy[]) => {
+  const save = (list: Strategy[]) => {
     setStrategies(list)
-    try { localStorage.setItem('fx_strats_v2', JSON.stringify(list)) } catch {}
-    const active = list.filter(s => s.active && s.btStatus==='passed')
-    onSignalsChange?.({
-      bullish: active.reduce((n,s)=>n+s.bullish, 0),
-      bearish: active.reduce((n,s)=>n+s.bearish, 0),
+    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(list)) } catch { /* ignore */ }
+  }
+
+  const runTest = (strat: Strategy, candleData: Candle[]): Strategy => {
+    const bt = runBacktest(candleData, strat.text, pipSize)
+    const sig = bt.passed ? evalForwardSignal(candleData, strat.text, pipSize) : null
+    return { ...strat, backtest: bt, testing: false, lastSignal: sig }
+  }
+
+  const addStrategy = async (stratText: string, source: Strategy['source']) => {
+    if (!stratText.trim()) return
+    setBusy(true); setError('')
+    const strat: Strategy = {
+      id: newId(),
+      name: name.trim() || `Strategy ${Date.now().toString(36).slice(-4).toUpperCase()}`,
+      text: stratText,
+      source,
+      addedAt: Date.now(),
+      backtest: null,
+      testing: true,
+      forwardWins: 0,
+      forwardLosses: 0,
+      forwardActive: true,
+      lastSignal: null,
+    }
+    const list = [...strategies, strat]
+    save(list)
+    // Run backtest async
+    setTimeout(() => {
+      const tested = runTest(strat, candles)
+      setStrategies(prev => {
+        const next = prev.map(s => s.id === strat.id ? tested : s)
+        try { localStorage.setItem(STORAGE_KEY, JSON.stringify(next)) } catch { /* ignore */ }
+        return next
+      })
+    }, 100)
+    setText(''); setUrl(''); setName(''); setBusy(false)
+  }
+
+  const fetchUrl = async () => {
+    if (!url.trim()) return
+    setBusy(true); setError('')
+    try {
+      const res = await fetch(`/api/strategy/url?u=${encodeURIComponent(url)}`)
+      const data = await res.json()
+      if (data.error) throw new Error(data.error)
+      await addStrategy(data.text, 'url')
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Fetch failed')
+    } finally { setBusy(false) }
+  }
+
+  const uploadPdf = async (file: File) => {
+    setBusy(true); setError('')
+    try {
+      const fd = new FormData()
+      fd.append('file', file)
+      const res = await fetch('/api/strategy/pdf', { method: 'POST', body: fd })
+      const data = await res.json()
+      if (data.error) throw new Error(data.error)
+      await addStrategy(data.text, 'pdf')
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Upload failed')
+    } finally { setBusy(false) }
+  }
+
+  const retest = (id: string) => {
+    setStrategies(prev => {
+      const next = prev.map(s => s.id === id ? { ...s, testing: true } : s)
+      save(next)
+      setTimeout(() => {
+        setStrategies(prev2 => {
+          const strat = prev2.find(s => s.id === id)
+          if (!strat) return prev2
+          const tested = runTest({ ...strat, testing: true }, candles)
+          const final = prev2.map(s => s.id === id ? tested : s)
+          try { localStorage.setItem(STORAGE_KEY, JSON.stringify(final)) } catch { /* ignore */ }
+          return final
+        })
+      }, 100)
+      return next
     })
   }
 
-  const runBt = (draft: Strategy, list: Strategy[]) => {
-    if (candles.length < 30) {
-      const fail = { ...draft, btStatus:'failed' as const, bt:{ trades:0,winRate:0,profitFactor:0,maxDrawdown:0,avgWin:0,avgLoss:0,passed:false,failReason:'Load chart data first',rulesFound:[] } }
-      persist(list.map(s => s.id===fail.id ? fail : s))
-      return
-    }
-    const running = { ...draft, btStatus:'running' as const }
-    const next = list.map(s => s.id===running.id ? running : s)
-    setStrategies(next)
-    setTimeout(() => {
-      const result = runBacktest(candles, draft.content)
-      const final: Strategy = {
-        ...running,
-        btStatus: result.rulesFound.length===0 ? 'no_rules' : result.passed ? 'passed' : 'failed',
-        bt: result, btDate: Date.now(), active: result.passed,
-      }
-      persist(next.map(s => s.id===final.id ? final : s))
-    }, 50)
+  const remove = (id: string) => {
+    save(strategies.filter(s => s.id !== id))
   }
 
-  const addFromContent = (content: string, source: string, type: Strategy['type']) => {
-    const { bullish, bearish } = kwScore(content)
-    const draft: Strategy = {
-      id: Date.now().toString(),
-      title: title.trim() || source.substring(0,48),
-      source, type, content: content.substring(0,6000),
-      active:false, addedAt:Date.now(), bullish, bearish,
-      btStatus:'pending', fwTrades:[],
-    }
-    setTitle('')
-    runBt(draft, [draft, ...strategies])
-  }
+  const activePassed = strategies.filter(s => s.backtest?.passed && s.forwardActive)
 
-  const addUrl = async () => {
-    if (!urlVal.trim()) return
-    setLoading(true); setError('')
-    try {
-      const res = await fetch(`/api/strategy/fetch?url=${encodeURIComponent(urlVal)}`)
-      const data = await res.json()
-      if (data.error) throw new Error(data.error)
-      addFromContent(data.text, urlVal, 'url')
-      setUrl('')
-    } catch (e) { setError(e instanceof Error ? e.message : 'Fetch failed') }
-    finally { setLoading(false) }
-  }
-
-  const addText = () => {
-    if (!txtVal.trim()) return
-    addFromContent(txtVal, 'Manual input', 'text')
-    setTxt('')
-  }
-
-  const handlePdf = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0]; if (!file) return
-    setLoading(true); setError('')
-    try {
-      const form = new FormData(); form.append('file', file)
-      const res = await fetch('/api/strategy/pdf', { method:'POST', body:form })
-      const data = await res.json()
-      if (data.error) throw new Error(data.error)
-      addFromContent(data.text, file.name, 'pdf')
-    } catch (e) { setError(e instanceof Error ? e.message : 'PDF failed') }
-    finally { setLoading(false); if (fileRef.current) fileRef.current.value='' }
-  }
-
-  const retest = (s: Strategy) => runBt({ ...s, fwTrades:[], fwWinRate:undefined }, strategies.map(x => x.id===s.id ? { ...s,fwTrades:[],fwWinRate:undefined } : x))
-  const toggle = (id: string) => persist(strategies.map(s => s.id===id ? { ...s,active:!s.active } : s))
-  const remove = (id: string) => persist(strategies.filter(s => s.id!==id))
-
-  const passed = strategies.filter(s => s.active && s.btStatus==='passed')
-  const passedCount = passed.length
+  const badge = activePassed.length > 0
+    ? <span style={{ padding: '1px 6px', borderRadius: 3, fontSize: 9, fontWeight: 700, background: '#0d3320', color: '#00c853', border: '1px solid #00c85330' }}>
+        {activePassed.length} LIVE
+      </span>
+    : null
 
   return (
-    <CollapsiblePanel
-      title="Strategy Feed"
-      icon="📈"
-      defaultOpen
-      badge={
-        passedCount > 0
-          ? <span style={{ fontSize:9, color:'#00c853', fontWeight:700 }}>{passedCount} LIVE</span>
-          : <span style={{ fontSize:9, color:'#444d56' }}>backtest ≥ 72% WR</span>
-      }
-    >
-      {/* Input tabs */}
-      <div style={{ display:'flex', borderBottom:'1px solid #30363d' }}>
-        {(['text','url','pdf'] as const).map(t => (
-          <button key={t} onClick={() => setTab(t)} style={{
-            flex:1, padding:'5px 0', fontSize:9, border:'none', cursor:'pointer',
-            fontFamily:'inherit', fontWeight:700, textTransform:'uppercase',
-            background: tab===t ? '#21262d' : 'transparent',
-            color:      tab===t ? '#e6edf3'  : '#8b949e',
-          }}>{t==='url'?'🔗 URL':t==='text'?'📝 Paste':'📄 PDF'}</button>
-        ))}
-      </div>
+    <CollapsiblePanel title="📋 Strategy Feed" defaultOpen={true} badge={badge}>
+      <div style={{ padding: '8px 12px', display: 'flex', flexDirection: 'column', gap: 8 }}>
 
-      <div style={{ padding:'8px 10px', display:'flex', flexDirection:'column', gap:5 }}>
-        <input value={title} onChange={e => setTitle(e.target.value)} placeholder="Label (optional)"
-          className="fx-input" style={{ fontSize:10, width:'100%' }} />
+        {/* Tab selector */}
+        <div style={{ display: 'flex', gap: 2 }}>
+          {(['paste', 'url', 'pdf'] as const).map(t => (
+            <button key={t} onClick={() => setTab(t)} style={{
+              flex: 1, padding: '4px 0', fontSize: 10, fontWeight: 700,
+              borderRadius: 4, cursor: 'pointer', border: 'none', fontFamily: 'inherit',
+              background: tab === t ? '#21262d' : 'transparent',
+              color: tab === t ? '#58a6ff' : '#8b949e',
+            }}>
+              {t === 'paste' ? '📝 Paste' : t === 'url' ? '🔗 URL' : '📄 PDF'}
+            </button>
+          ))}
+        </div>
 
-        {tab==='text' && (
+        {/* Name field */}
+        <input
+          placeholder="Strategy name (optional)"
+          value={name}
+          onChange={e => setName(e.target.value)}
+          style={{ width: '100%', padding: '4px 8px', background: '#21262d',
+            border: '1px solid #30363d', borderRadius: 4, color: '#e6edf3',
+            fontSize: 10, fontFamily: 'inherit' }}
+        />
+
+        {/* Input */}
+        {tab === 'paste' && (
           <>
-            <textarea value={txtVal} onChange={e => setTxt(e.target.value)} rows={4}
-              placeholder="Paste strategy rules, newsletter, video transcript, forum post, indicator description…"
-              className="fx-input" style={{ fontSize:10, width:'100%', resize:'vertical' }} />
-            <button onClick={addText} disabled={!txtVal.trim()} className="btn-action"
-              style={{ background:'#0d2137', borderColor:'#58a6ff40', color:'#58a6ff' }}>
-              + Add → Backtest
+            <textarea
+              placeholder="Paste strategy rules, indicator conditions, or any trading logic here…"
+              value={text}
+              onChange={e => setText(e.target.value)}
+              rows={4}
+              style={{ width: '100%', padding: '6px 8px', background: '#21262d',
+                border: '1px solid #30363d', borderRadius: 4, color: '#e6edf3',
+                fontSize: 10, fontFamily: 'inherit', resize: 'vertical' }}
+            />
+            <button onClick={() => addStrategy(text, 'paste')} disabled={busy || !text.trim()}
+              style={{ padding: '5px 0', background: '#1f6feb', border: 'none', borderRadius: 4,
+                color: '#fff', fontSize: 10, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit',
+                opacity: (busy || !text.trim()) ? 0.5 : 1 }}>
+              {busy ? 'Running backtest…' : '+ Add & Backtest'}
             </button>
           </>
         )}
-        {tab==='url' && (
+
+        {tab === 'url' && (
           <>
-            <input value={urlVal} onChange={e => setUrl(e.target.value)}
-              onKeyDown={e => e.key==='Enter' && addUrl()}
-              placeholder="https://forexfactory.com/... babypips.com/... any URL"
-              className="fx-input" style={{ fontSize:10, width:'100%' }} />
-            <button onClick={addUrl} disabled={loading||!urlVal.trim()} className="btn-action"
-              style={{ background:'#0d2137', borderColor:'#58a6ff40', color:'#58a6ff', opacity:loading?0.5:1 }}>
-              {loading?'Fetching…':'+ Fetch → Backtest'}
+            <input
+              placeholder="https://… (strategy article, forum post, or doc)"
+              value={url}
+              onChange={e => setUrl(e.target.value)}
+              style={{ width: '100%', padding: '4px 8px', background: '#21262d',
+                border: '1px solid #30363d', borderRadius: 4, color: '#e6edf3',
+                fontSize: 10, fontFamily: 'inherit' }}
+            />
+            <button onClick={fetchUrl} disabled={busy || !url.trim()}
+              style={{ padding: '5px 0', background: '#1f6feb', border: 'none', borderRadius: 4,
+                color: '#fff', fontSize: 10, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit',
+                opacity: (busy || !url.trim()) ? 0.5 : 1 }}>
+              {busy ? 'Fetching…' : '🔗 Fetch & Backtest'}
             </button>
           </>
         )}
-        {tab==='pdf' && (
-          <label style={{ cursor:'pointer' }}>
-            <input ref={fileRef} type="file" accept=".pdf" onChange={handlePdf} style={{ display:'none' }} />
-            <div className="fx-input" style={{ textAlign:'center', color:'#58a6ff', fontSize:10, cursor:'pointer', padding:'8px' }}>
-              {loading?'Parsing PDF…':'📄 Click to upload PDF → Auto-backtest'}
+
+        {tab === 'pdf' && (
+          <>
+            <label style={{ display: 'block', padding: '10px', background: '#21262d',
+              border: '1px dashed #30363d', borderRadius: 4, textAlign: 'center',
+              cursor: 'pointer', color: '#8b949e', fontSize: 10 }}>
+              <input type="file" accept=".pdf" style={{ display: 'none' }}
+                onChange={e => { if (e.target.files?.[0]) uploadPdf(e.target.files[0]) }} />
+              {busy ? '⏳ Parsing PDF…' : '📄 Click to upload PDF strategy'}
+            </label>
+          </>
+        )}
+
+        {error && <div style={{ color: '#ff1744', fontSize: 10 }}>⚠ {error}</div>}
+
+        {/* Strategy list */}
+        {strategies.length > 0 && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 4 }}>
+            <div style={{ fontSize: 10, color: '#8b949e', fontWeight: 700, letterSpacing: '0.05em' }}>
+              STRATEGIES ({strategies.length})
             </div>
-          </label>
-        )}
-        {error && <div style={{ color:'#ff1744', fontSize:9 }}>⚠ {error}</div>}
-      </div>
+            {strategies.map(s => {
+              const bt = s.backtest
+              const statusColor = s.testing ? '#ffd600' : bt?.passed ? '#00c853' : bt ? '#ff1744' : '#8b949e'
+              const statusText  = s.testing ? 'TESTING…' : bt?.passed ? 'PASS ✔' : bt ? 'FAIL ✖' : 'NO RULES'
+              const fwPct = s.forwardWins + s.forwardLosses > 0
+                ? Math.round(s.forwardWins / (s.forwardWins + s.forwardLosses) * 100)
+                : null
 
-      {/* Strategy list */}
-      <div style={{ borderTop:'1px solid #21262d' }}>
-        {strategies.length===0 ? (
-          <div style={{ padding:'14px', color:'#444d56', textAlign:'center', fontSize:10 }}>
-            Add a strategy above — it will be backtested automatically
-          </div>
-        ) : strategies.map((s, i) => {
-          const col = STATUS_COLOR[s.btStatus]
-          const settled = s.fwTrades.filter(t => t.outcome!=='pending')
-          return (
-            <div key={s.id} style={{ borderBottom:'1px solid #21262d', background:i%2===0?'#161b22':'#1c2128' }}>
-              <div style={{ display:'flex', alignItems:'center', padding:'6px 10px', gap:5 }}>
-                <input type="checkbox" checked={s.active} onChange={() => toggle(s.id)}
-                  disabled={s.btStatus!=='passed'}
-                  style={{ cursor:s.btStatus==='passed'?'pointer':'not-allowed' }} />
-                <span onClick={() => setExp(expanded===s.id?null:s.id)}
-                  style={{ flex:1, cursor:'pointer', overflow:'hidden', textOverflow:'ellipsis',
-                    whiteSpace:'nowrap', color:s.active?'#e6edf3':'#666', fontSize:10 }}>
-                  {s.type==='pdf'?'📄':s.type==='url'?'🔗':'📝'} {s.title}
-                </span>
-                <span style={{ fontSize:8, fontWeight:800, color:col, border:`1px solid ${col}40`,
-                  padding:'1px 5px', borderRadius:3, whiteSpace:'nowrap', cursor:'default' }}>
-                  {STATUS_LABEL[s.btStatus]}
-                </span>
-                <span onClick={() => retest(s)} title="Re-run backtest"
-                  style={{ color:'#58a6ff80', cursor:'pointer', fontSize:12 }}>↺</span>
-                <span onClick={() => remove(s.id)}
-                  style={{ color:'#ff174480', cursor:'pointer', fontWeight:700, fontSize:14 }}>×</span>
-              </div>
+              return (
+                <div key={s.id} style={{ background: '#0d1117', border: '1px solid #30363d',
+                  borderRadius: 6, padding: '6px 8px', fontSize: 10 }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 3 }}>
+                    <span style={{ color: '#e6edf3', fontWeight: 700, flex: 1, overflow: 'hidden',
+                      textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.name}</span>
+                    <div style={{ display: 'flex', gap: 4, flexShrink: 0, marginLeft: 4 }}>
+                      <span style={{ padding: '1px 5px', borderRadius: 3, fontSize: 9, fontWeight: 700,
+                        background: statusColor + '22', color: statusColor,
+                        border: `1px solid ${statusColor}44` }}>{statusText}</span>
+                      <button onClick={() => retest(s.id)} title="Re-run backtest"
+                        style={{ padding: '1px 5px', background: '#21262d', border: '1px solid #30363d',
+                          borderRadius: 3, color: '#8b949e', cursor: 'pointer', fontSize: 9, fontFamily: 'inherit' }}>↺</button>
+                      <button onClick={() => remove(s.id)} title="Remove"
+                        style={{ padding: '1px 5px', background: '#21262d', border: '1px solid #30363d',
+                          borderRadius: 3, color: '#ff1744', cursor: 'pointer', fontSize: 9, fontFamily: 'inherit' }}>✕</button>
+                    </div>
+                  </div>
 
-              {expanded===s.id && (
-                <div style={{ background:'#0d1117', padding:'6px 10px 8px', borderTop:'1px solid #21262d' }}>
-                  {s.bt?.rulesFound && s.bt.rulesFound.length>0 && (
-                    <div style={{ marginBottom:5 }}>
-                      <div style={{ color:'#58a6ff', fontSize:9, fontWeight:700, marginBottom:3 }}>Rules detected</div>
-                      <div style={{ display:'flex', flexWrap:'wrap', gap:3 }}>
-                        {s.bt.rulesFound.map(r => (
-                          <span key={r} style={{ fontSize:8, padding:'1px 5px', borderRadius:3, background:'#21262d', color:'#8b949e' }}>{r}</span>
-                        ))}
+                  {bt && !s.testing && (
+                    <div style={{ color: '#8b949e', fontSize: 9, marginBottom: 3 }}>
+                      {bt.reason}
+                    </div>
+                  )}
+
+                  {/* Forward test bar */}
+                  {bt?.passed && (
+                    <div style={{ marginTop: 4 }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 2, fontSize: 9 }}>
+                        <span style={{ color: '#8b949e' }}>Live forward: {s.forwardWins}W / {s.forwardLosses}L
+                          {fwPct !== null ? ` (${fwPct}%)` : ''}</span>
+                        {s.lastSignal && (
+                          <span style={{ color: s.lastSignal === 'long' ? '#00c853' : '#ff1744', fontWeight: 700 }}>
+                            Signal: {s.lastSignal.toUpperCase()}
+                          </span>
+                        )}
                       </div>
-                    </div>
-                  )}
-                  {s.bt && (
-                    <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'2px 10px', fontSize:9 }}>
-                      {[
-                        ['Trades',        s.bt.trades.toString()],
-                        ['Win Rate',       s.bt.winRate.toFixed(1)+'%'],
-                        ['Profit Factor',  s.bt.profitFactor.toFixed(2)],
-                        ['Max Drawdown',   s.bt.maxDrawdown.toFixed(1)+' ATR'],
-                      ].map(([label,val]) => (
-                        <div key={label} style={{ display:'flex', justifyContent:'space-between' }}>
-                          <span style={{ color:'#8b949e' }}>{label}</span>
-                          <span style={{ color:'#e6edf3', fontWeight:700 }}>{val}</span>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                  {s.bt?.failReason && (
-                    <div style={{ marginTop:5, fontSize:9, color:'#ff1744', background:'#3d0d1420', padding:'4px 6px', borderRadius:4 }}>
-                      ⚠ {s.bt.failReason}
-                    </div>
-                  )}
-                  {s.btStatus==='passed' && (
-                    <div style={{ marginTop:5, borderTop:'1px solid #21262d', paddingTop:5 }}>
-                      <div style={{ display:'flex', justifyContent:'space-between', fontSize:9 }}>
-                        <span style={{ color:'#58a6ff', fontWeight:700 }}>Forward Test</span>
-                        <span style={{ color:s.fwWinRate===undefined?'#8b949e':s.fwWinRate>=52?'#00c853':'#ff1744' }}>
-                          {s.fwWinRate!==undefined ? `${s.fwWinRate.toFixed(0)}% (${settled.length})` : `${settled.length} settled`}
-                        </span>
-                      </div>
-                      {settled.length>0 && (
-                        <div style={{ display:'flex', height:4, borderRadius:2, overflow:'hidden', background:'#21262d', marginTop:3 }}>
-                          <div style={{ width:`${settled.filter(t=>t.outcome==='win').length/settled.length*100}%`, background:'#00c853' }} />
-                          <div style={{ width:`${settled.filter(t=>t.outcome==='loss').length/settled.length*100}%`, background:'#ff1744' }} />
+                      {s.forwardWins + s.forwardLosses > 0 && (
+                        <div className="score-bar">
+                          <div className="score-bar-fill" style={{
+                            width: `${fwPct}%`,
+                            background: (fwPct ?? 0) >= 60 ? '#00c853' : (fwPct ?? 0) >= 40 ? '#ffd600' : '#ff1744',
+                          }} />
                         </div>
                       )}
                     </div>
                   )}
+
+                  <div style={{ fontSize: 9, color: '#444d56', marginTop: 3 }}>
+                    {(['paste','url','pdf'] as const).includes(s.source) ? s.source.toUpperCase() : 'PASTE'} · {new Date(s.addedAt).toLocaleDateString()}
+                  </div>
                 </div>
-              )}
-            </div>
-          )
-        })}
+              )
+            })}
+          </div>
+        )}
+
+        {strategies.length === 0 && (
+          <div style={{ color: '#444d56', fontSize: 10, textAlign: 'center', padding: '8px 0' }}>
+            Add strategies from PDFs, URLs, or paste text above.
+            They auto-backtest (min 72% WR + 1.5 PF to pass).
+          </div>
+        )}
       </div>
     </CollapsiblePanel>
   )
