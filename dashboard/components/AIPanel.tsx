@@ -1,28 +1,67 @@
 'use client'
 import { useState } from 'react'
-import { AIAnalysis } from '@/lib/indicators'
+import { AIAnalysis, Signal } from '@/lib/indicators'
 
-// ── Shared collapsible wrapper ────────────────────────────────────────────────
-interface CPProps {
-  title: string
-  badge?: React.ReactNode
-  defaultOpen?: boolean
-  children: React.ReactNode
-}
+// ── CollapsiblePanel ──────────────────────────────────────────────────────────
+interface CPProps { title: string; badge?: React.ReactNode; defaultOpen?: boolean; children: React.ReactNode }
 export function CollapsiblePanel({ title, badge, defaultOpen = true, children }: CPProps) {
   const [open, setOpen] = useState(defaultOpen)
   return (
     <div className="panel" style={{ marginBottom: 0 }}>
-      <div className="panel-header"
-        style={{ cursor: 'pointer', userSelect: 'none', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}
+      <div className="panel-header" style={{ cursor: 'pointer', userSelect: 'none' }}
         onClick={() => setOpen(o => !o)}>
         <span>{title}</span>
         <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
           {badge}
-          <span style={{ color: '#58a6ff', fontSize: 10, opacity: 0.7 }}>{open ? '▲' : '▼'}</span>
+          <span style={{ fontSize: 9, opacity: 0.5, color: 'var(--text-dim)' }}>{open ? '▲' : '▼'}</span>
         </div>
       </div>
       {open && children}
+    </div>
+  )
+}
+
+// ── Score Arc (SVG gauge) ─────────────────────────────────────────────────────
+function ScoreArc({ score, max, color }: { score: number; max: number; color: string }) {
+  const r = 26, cx = 32, cy = 32
+  const full = 2 * Math.PI * r
+  const arcPct = 0.72  // 259.2° visible arc
+  const arcLen = full * arcPct
+  const filled = (score / max) * arcLen
+  const rot = -130 // start angle offset
+
+  return (
+    <svg width={64} height={64} style={{ transform: `rotate(${rot}deg)`, overflow: 'visible', flexShrink: 0 }}>
+      {/* Track */}
+      <circle cx={cx} cy={cy} r={r} fill="none" stroke="var(--border-hi)" strokeWidth={5}
+        strokeDasharray={`${arcLen} ${full - arcLen}`} strokeLinecap="round" />
+      {/* Fill */}
+      <circle cx={cx} cy={cy} r={r} fill="none" stroke={color} strokeWidth={5}
+        strokeDasharray={`${filled} ${full - filled}`} strokeLinecap="round"
+        style={{ transition: 'stroke-dasharray .7s cubic-bezier(.4,0,.2,1)', filter: `drop-shadow(0 0 4px ${color}88)` }} />
+    </svg>
+  )
+}
+
+// ── Signal chip ───────────────────────────────────────────────────────────────
+function SigChip({ sig }: { sig: Signal }) {
+  const active = sig.long || sig.short
+  const isBull = sig.long && !sig.short
+  const isBear = sig.short && !sig.long
+  const bg = isBull ? 'var(--bull-glow)' : isBear ? 'var(--bear-glow)' : active ? '#f0a83211' : 'transparent'
+  const col = isBull ? 'var(--bull)' : isBear ? 'var(--bear)' : active ? 'var(--amber)' : 'var(--text-muted)'
+  const border = isBull ? '#00d48f33' : isBear ? '#ff4e6a33' : active ? '#f0a83233' : 'var(--border)'
+  const icon = isBull ? '▲' : isBear ? '▼' : active ? '◆' : '·'
+
+  return (
+    <div style={{
+      display: 'flex', alignItems: 'center', gap: 4,
+      padding: '3px 7px', borderRadius: 4,
+      background: bg, border: `1px solid ${border}`,
+      color: col, fontSize: 9, fontWeight: active ? 700 : 400,
+    }}>
+      <span style={{ fontSize: 8 }}>{icon}</span>
+      <span style={{ lineHeight: 1 }}>{sig.name.replace(/^[①②③④⑤⑥⑦] /, '')}</span>
     </div>
   )
 }
@@ -37,29 +76,28 @@ interface Props {
   pipSize: number
 }
 
-const scoreColor = (s: number, max: number) => {
-  const pct = s / max
-  if (pct >= 0.65) return '#00c853'
-  if (pct >= 0.45) return '#58a6ff'
-  if (pct >= 0.3)  return '#ffd600'
-  return '#ff1744'
+const biasColor = (b: string) =>
+  b === 'BULLISH' ? 'var(--bull)' : b === 'BEARISH' ? 'var(--bear)' : 'var(--amber)'
+const biasGlow  = (b: string) =>
+  b === 'BULLISH' ? 'glow-bull' : b === 'BEARISH' ? 'glow-bear' : 'glow-amber'
+
+function fmtLevel(v: number, ps: number) {
+  return v.toFixed(ps < 0.01 ? 2 : ps < 0.001 ? 3 : 5)
 }
 
-const biasColor = (b: string) =>
-  b === 'BULLISH' ? '#00c853' : b === 'BEARISH' ? '#ff1744' : '#ffd600'
-
-const catColor = (cat: string) => {
-  if (cat === 'SMC')      return '#00e5ff'
-  if (cat === 'Strategy') return '#ffd600'
-  if (cat === 'Momentum') return '#ce93d8'
-  if (cat === 'Context')  return '#8b949e'
-  return '#58a6ff'
+const CAT_ORDER = ['Trend', 'SMC', 'Momentum', 'Context', 'Strategy']
+const CAT_COLOR: Record<string, string> = {
+  Trend:    'var(--blue)',
+  SMC:      'var(--cyan)',
+  Momentum: 'var(--purple)',
+  Context:  'var(--text-dim)',
+  Strategy: 'var(--amber)',
 }
 
 export default function AIPanel({ analysis: a, loading, pair, account, riskPct, pipSize }: Props) {
-  if (loading) return (
-    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px 0' }}>
-      <div style={{ color: '#8b949e', fontSize: 12 }} className="animate-pulse">
+  if (loading && !a) return (
+    <div style={{ padding: '24px 12px', textAlign: 'center' }}>
+      <div className="animate-pulse" style={{ color: 'var(--text-muted)', fontSize: 11 }}>
         🤖 Analysing {pair}…
       </div>
     </div>
@@ -69,177 +107,211 @@ export default function AIPanel({ analysis: a, loading, pair, account, riskPct, 
   const risk$ = account * riskPct / 100
   const lots  = risk$ / Math.max(a.slPips * 10, 0.01)
   const tradeDir = a.bias === 'BULLISH' ? 'LONG' : a.bias === 'BEARISH' ? 'SHORT' : null
+  const accentClass = biasGlow(a.bias)
 
   const divLabel = a.rsiDiv
-    ? ({ regular_bull: 'Regular Bull', regular_bear: 'Regular Bear', hidden_bull: 'Hidden Bull', hidden_bear: 'Hidden Bear' }[a.rsiDiv.type])
+    ? ({ regular_bull: 'Div ▲', regular_bear: 'Div ▼', hidden_bull: 'Hid ▲', hidden_bear: 'Hid ▼' }[a.rsiDiv.type])
     : null
 
-  const pvsraLabel = ({
-    climax_bull: 'Climax ↑', climax_bear: 'Climax ↓',
-    rising_bull: 'Rising ↑', rising_bear: 'Rising ↓', neutral: '–'
-  })[a.pvsra]
+  // Group signals by category
+  const grouped = CAT_ORDER.map(cat => ({
+    cat,
+    sigs: a.signals.filter(s => s.category === cat),
+  })).filter(g => g.sigs.length > 0)
+
+  const scoreColor = a.longScore > a.shortScore
+    ? 'var(--bull)' : a.shortScore > a.longScore
+    ? 'var(--bear)' : 'var(--amber)'
+  const activeScore = Math.max(a.longScore, a.shortScore)
 
   return (
-    <div className="flex flex-col gap-2 fade-in" style={{ fontSize: 11 }}>
+    <div className="col gap8 fade-in" style={{ fontSize: 11 }}>
 
-      {/* ── AI Verdict ── */}
-      <CollapsiblePanel title="🤖 AI Verdict" defaultOpen={true}>
-        <div style={{ padding: '10px 12px', textAlign: 'center' }}>
-          <div style={{
-            fontSize: 26, fontWeight: 800, letterSpacing: '0.1em',
-            color: biasColor(a.bias),
-            textShadow: `0 0 20px ${biasColor(a.bias)}66`,
-          }}>{a.bias}</div>
-          <div style={{ color: '#8b949e', fontSize: 10, marginTop: 4 }}>
-            {pair} · {a.session}
-            {a.bestSession
-              ? <span style={{ color: '#00c853', marginLeft: 6 }}>✔ Prime Session</span>
-              : <span style={{ color: '#ffd600', marginLeft: 6 }}>⏳ Off-Peak</span>}
-          </div>
-          {/* Strategy highlights */}
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, justifyContent: 'center', marginTop: 8 }}>
-            {a.supertrendBull !== undefined && (
-              <span style={{ padding: '2px 6px', borderRadius: 3, fontSize: 9, fontWeight: 700,
-                background: a.supertrendBull ? '#0d3320' : '#3d0d14',
-                color: a.supertrendBull ? '#00c853' : '#ff1744',
-                border: `1px solid ${a.supertrendBull ? '#00c85330' : '#ff174430'}` }}>
-                ST {a.supertrendBull ? '▲' : '▼'}
-              </span>
-            )}
-            {a.rsiDiv && (
-              <span style={{ padding: '2px 6px', borderRadius: 3, fontSize: 9, fontWeight: 700,
-                background: a.rsiDiv.type.includes('bull') ? '#0d3320' : '#3d0d14',
-                color: a.rsiDiv.type.includes('bull') ? '#00c853' : '#ff1744',
-                border: `1px solid ${a.rsiDiv.type.includes('bull') ? '#00c85330' : '#ff174430'}` }}>
-                DIV {divLabel}
-              </span>
-            )}
-            {a.bbSqueeze && (
-              <span style={{ padding: '2px 6px', borderRadius: 3, fontSize: 9, fontWeight: 700,
-                background: '#332600', color: '#ffd600', border: '1px solid #ffd60030' }}>
-                BB SQUEEZE
-              </span>
-            )}
-            {a.oteSignal?.inZone && (
-              <span style={{ padding: '2px 6px', borderRadius: 3, fontSize: 9, fontWeight: 700,
-                background: a.oteSignal.direction === 'long' ? '#0d3320' : '#3d0d14',
-                color: a.oteSignal.direction === 'long' ? '#00c853' : '#ff1744',
-                border: `1px solid ${a.oteSignal.direction === 'long' ? '#00c85330' : '#ff174430'}` }}>
-                OTE {a.oteSignal.fibLevel.toFixed(0)}%
-              </span>
-            )}
-            {a.londonBreak && (
-              <span style={{ padding: '2px 6px', borderRadius: 3, fontSize: 9, fontWeight: 700,
-                background: a.londonBreak.direction === 'bull' ? '#0d1a37' : '#2d0d1a',
-                color: a.londonBreak.direction === 'bull' ? '#58a6ff' : '#ff6b9d',
-                border: `1px solid ${a.londonBreak.direction === 'bull' ? '#58a6ff30' : '#ff6b9d30'}` }}>
-                BREAK {a.londonBreak.direction === 'bull' ? '▲' : '▼'}
-              </span>
-            )}
-          </div>
-        </div>
-      </CollapsiblePanel>
+      {/* ── Verdict Card ── */}
+      <div className={`panel panel-accent-${a.bias === 'BULLISH' ? 'bull' : a.bias === 'BEARISH' ? 'bear' : 'amber'}`}>
+        <div className="panel-header">🤖 AI Confluence</div>
+        <div style={{ padding: '10px 14px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
 
-      {/* ── Confluence Score ── */}
-      <CollapsiblePanel title="Confluence Score" defaultOpen={true}>
-        <div style={{ padding: '8px 12px', display: 'flex', flexDirection: 'column', gap: 6 }}>
-          {[
-            { label: 'LONG',  score: a.longScore,  color: '#00c853' },
-            { label: 'SHORT', score: a.shortScore, color: '#ff1744' },
-          ].map(({ label, score, color }) => (
-            <div key={label}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 3 }}>
-                <span style={{ color: '#8b949e' }}>{label}</span>
-                <span style={{ color: scoreColor(score, a.maxScore), fontWeight: 700 }}>
-                  {score} / {a.maxScore}
-                </span>
+            {/* Bias text */}
+            <div style={{ flex: 1 }}>
+              <div className={accentClass} style={{
+                display: 'inline-block',
+                fontSize: 24, fontWeight: 800,
+                color: biasColor(a.bias),
+                letterSpacing: '0.06em',
+                padding: '2px 10px',
+                borderRadius: 6,
+                background: a.bias === 'BULLISH' ? 'var(--bull-glow)' : a.bias === 'BEARISH' ? 'var(--bear-glow)' : 'var(--amber-glow)',
+              }}>{a.bias}</div>
+
+              <div style={{ marginTop: 6, color: 'var(--text-dim)', fontSize: 10 }}>
+                {pair}
+                <span style={{ margin: '0 5px', color: 'var(--text-muted)' }}>·</span>
+                {a.session}
+                {a.bestSession
+                  ? <span style={{ color: 'var(--bull)', marginLeft: 6 }}>✦ Prime</span>
+                  : <span style={{ color: 'var(--amber)', marginLeft: 6 }}>◌ Off-Peak</span>}
               </div>
-              <div className="score-bar">
-                <div className="score-bar-fill" style={{
-                  width: `${(score / a.maxScore) * 100}%`,
-                  background: color,
-                  opacity: 0.85,
-                }} />
+
+              {/* Strategy badges */}
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginTop: 8 }}>
+                {a.supertrendBull !== undefined && (
+                  <span className={`badge ${a.supertrendBull ? 'badge-bull' : 'badge-bear'}`}>
+                    ST {a.supertrendBull ? '▲' : '▼'}
+                  </span>
+                )}
+                {divLabel && (
+                  <span className={`badge ${a.rsiDiv!.type.includes('bull') ? 'badge-bull' : 'badge-bear'}`}>
+                    RSI {divLabel}
+                  </span>
+                )}
+                {a.bbSqueeze && <span className="badge badge-amber">BB ⚡ SQZ</span>}
+                {a.bbBreakout && (
+                  <span className={`badge ${a.bbBreakout === 'bull' ? 'badge-bull' : 'badge-bear'}`}>
+                    BB BREAK {a.bbBreakout === 'bull' ? '▲' : '▼'}
+                  </span>
+                )}
+                {a.oteSignal?.inZone && (
+                  <span className={`badge ${a.oteSignal.direction === 'long' ? 'badge-bull' : 'badge-bear'}`}>
+                    OTE {a.oteSignal.fibLevel.toFixed(0)}%
+                  </span>
+                )}
+                {a.londonBreak && (
+                  <span className={`badge ${a.londonBreak.direction === 'bull' ? 'badge-blue' : 'badge-bear'}`}>
+                    BREAK {a.londonBreak.direction === 'bull' ? '▲' : '▼'}
+                  </span>
+                )}
               </div>
             </div>
-          ))}
-        </div>
-      </CollapsiblePanel>
 
-      {/* ── AI Thinking Log ── */}
-      <CollapsiblePanel title="AI Thinking Log" defaultOpen={false}
-        badge={<span style={{ fontSize: 9, color: '#8b949e' }}>{a.signals.length} signals</span>}>
-        <div>
-          <div className="signal-row" style={{ background: '#0d1117' }}>
-            <span style={{ color: '#8b949e', flex: 1 }}>Signal</span>
-            <span style={{ color: '#8b949e', fontSize: 9, width: 36, textAlign: 'center' }}>CAT</span>
-            <span style={{ color: '#00c853', width: 28, textAlign: 'center' }}>L</span>
-            <span style={{ color: '#ff1744', width: 28, textAlign: 'center' }}>S</span>
-          </div>
-          {a.signals.map((sig, i) => (
-            <div key={i} className="signal-row" style={{ background: i % 2 === 0 ? '#161b22' : '#1c2128' }}>
-              <span style={{ color: sig.long ? '#e6edf3' : sig.short ? '#e6edf3' : '#8b949e', flex: 1 }}>{sig.name}</span>
-              <span style={{ color: catColor(sig.category), fontSize: 8, width: 36, textAlign: 'center', textTransform: 'uppercase' }}>{sig.category}</span>
-              <span style={{ color: sig.long  ? '#00c853' : '#30363d', width: 28, textAlign: 'center', fontWeight: 700 }}>
-                {sig.long  ? '✔' : '·'}
-              </span>
-              <span style={{ color: sig.short ? '#ff1744' : '#30363d', width: 28, textAlign: 'center', fontWeight: 700 }}>
-                {sig.short ? '✔' : '·'}
-              </span>
+            {/* Score gauge */}
+            <div style={{ position: 'relative', flexShrink: 0 }}>
+              <ScoreArc score={activeScore} max={a.maxScore} color={scoreColor} />
+              <div style={{
+                position: 'absolute', inset: 0,
+                display: 'flex', flexDirection: 'column',
+                alignItems: 'center', justifyContent: 'center',
+              }}>
+                <span style={{ fontSize: 15, fontWeight: 800, color: scoreColor,
+                  textShadow: `0 0 10px ${scoreColor}` }}>{activeScore}</span>
+                <span style={{ fontSize: 8, color: 'var(--text-muted)', marginTop: 1 }}>/{a.maxScore}</span>
+              </div>
             </div>
-          ))}
-        </div>
-      </CollapsiblePanel>
+          </div>
 
-      {/* ── Trade Idea ── */}
-      {tradeDir && (
-        <CollapsiblePanel
-          title="Trade Idea"
-          defaultOpen={true}
-          badge={
-            <span style={{ fontWeight: 800, fontSize: 11,
-              color: tradeDir === 'LONG' ? '#00c853' : '#ff1744' }}>
-              {tradeDir === 'LONG' ? '🟢 LONG' : '🔴 SHORT'}
-            </span>
-          }>
-          <div style={{ padding: '4px 0' }}>
+          {/* Long / Short mini bars */}
+          <div style={{ marginTop: 12, display: 'flex', flexDirection: 'column', gap: 4 }}>
             {[
-              { label: 'Entry',     value: a.entry.toFixed(pipSize < 0.01 ? 2 : pipSize < 0.001 ? 3 : 5), c: '#e6edf3' },
-              { label: 'Stop Loss', value: (tradeDir === 'LONG' ? a.longSL : a.shortSL).toFixed(pipSize < 0.01 ? 2 : pipSize < 0.001 ? 3 : 5), c: '#ff1744' },
-              { label: 'TP1',       value: (tradeDir === 'LONG' ? a.longTP1 : a.shortTP1).toFixed(pipSize < 0.01 ? 2 : pipSize < 0.001 ? 3 : 5), c: '#58a6ff' },
-              { label: 'TP2',       value: (tradeDir === 'LONG' ? a.longTP2 : a.shortTP2).toFixed(pipSize < 0.01 ? 2 : pipSize < 0.001 ? 3 : 5), c: '#00c853' },
-              { label: 'SL Pips',   value: a.slPips.toFixed(1) + ' pips',                   c: '#8b949e' },
-              { label: 'R:R',       value: '1 : ' + (a.tp2Pips / (a.slPips || 1)).toFixed(1), c: '#ffd600' },
-              { label: 'Risk $',    value: `$${risk$.toFixed(2)} (${riskPct}%)`,             c: '#ffd600' },
-              { label: 'Lot Size',  value: '≈ ' + lots.toFixed(2) + ' lots',                c: '#8b949e' },
-            ].map(({ label, value, c }, i) => (
-              <div key={label} className="signal-row"
-                style={{ background: i % 2 === 0 ? '#161b22' : '#1c2128' }}>
-                <span style={{ color: '#8b949e' }}>{label}</span>
-                <span style={{ color: c, fontWeight: 600 }}>{value}</span>
+              { label: 'LONG',  s: a.longScore,  c: 'var(--bull)' },
+              { label: 'SHORT', s: a.shortScore, c: 'var(--bear)' },
+            ].map(({ label, s, c }) => (
+              <div key={label} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <span style={{ width: 36, color: 'var(--text-muted)', fontSize: 9, fontWeight: 700 }}>{label}</span>
+                <div className="score-bar" style={{ flex: 1 }}>
+                  <div className="score-bar-fill" style={{ width: `${(s / a.maxScore) * 100}%`, background: c }} />
+                </div>
+                <span style={{ width: 24, textAlign: 'right', fontSize: 9, fontWeight: 700, color: c }}>{s}</span>
               </div>
             ))}
+          </div>
+        </div>
+      </div>
+
+      {/* ── Signal Grid ── */}
+      <CollapsiblePanel title="Signal Analysis" defaultOpen={true}
+        badge={<span className="badge badge-dim">{a.signals.filter(s => s.long || s.short).length} active</span>}>
+        <div style={{ padding: '8px 12px', display: 'flex', flexDirection: 'column', gap: 10 }}>
+          {grouped.map(({ cat, sigs }) => (
+            <div key={cat}>
+              <div style={{ fontSize: 8.5, fontWeight: 700, letterSpacing: '0.1em',
+                color: CAT_COLOR[cat], marginBottom: 5, textTransform: 'uppercase' }}>
+                {cat}
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 3 }}>
+                {sigs.map((sig, i) => <SigChip key={i} sig={sig} />)}
+              </div>
+            </div>
+          ))}
+        </div>
+      </CollapsiblePanel>
+
+      {/* ── Trade Setup ── */}
+      {tradeDir && (
+        <CollapsiblePanel title="Trade Setup" defaultOpen={true}
+          badge={
+            <span className={`badge ${tradeDir === 'LONG' ? 'badge-bull' : 'badge-bear'}`}>
+              {tradeDir === 'LONG' ? '▲ LONG' : '▼ SHORT'}
+            </span>
+          }>
+          <div style={{ padding: '10px 14px' }}>
+
+            {/* Visual price levels */}
+            <div style={{
+              display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr',
+              gap: 6, marginBottom: 12,
+            }}>
+              {[
+                { label: 'ENTRY',    value: fmtLevel(a.entry, pipSize),    c: 'var(--text)',   bg: 'var(--bg-raised)' },
+                { label: 'STOP',     value: fmtLevel(tradeDir === 'LONG' ? a.longSL : a.shortSL, pipSize), c: 'var(--bear)', bg: 'var(--bear-glow)' },
+                { label: 'TP1',      value: fmtLevel(tradeDir === 'LONG' ? a.longTP1 : a.shortTP1, pipSize), c: 'var(--blue)', bg: 'var(--blue-glow)' },
+                { label: 'TP2',      value: fmtLevel(tradeDir === 'LONG' ? a.longTP2 : a.shortTP2, pipSize), c: 'var(--bull)', bg: 'var(--bull-glow)' },
+              ].map(({ label, value, c, bg }) => (
+                <div key={label} style={{
+                  background: bg, borderRadius: 5,
+                  border: `1px solid ${c}33`,
+                  padding: '5px 6px', textAlign: 'center',
+                }}>
+                  <div style={{ fontSize: 8, color: 'var(--text-muted)', marginBottom: 3, letterSpacing: '0.1em' }}>{label}</div>
+                  <div style={{ fontSize: 9.5, fontWeight: 800, color: c, letterSpacing: '-0.01em' }}>{value}</div>
+                </div>
+              ))}
+            </div>
+
+            {/* Trade meta */}
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 4 }}>
+              {[
+                { label: 'SL Pips',  value: a.slPips.toFixed(1) },
+                { label: 'R:R',      value: `1 : ${(a.tp2Pips / (a.slPips || 1)).toFixed(1)}`, highlight: true },
+                { label: 'Risk $',   value: `$${risk$.toFixed(2)}` },
+                { label: 'Lot Size', value: `${lots.toFixed(2)} lots` },
+              ].map(({ label, value, highlight }) => (
+                <div key={label} style={{
+                  display: 'flex', justifyContent: 'space-between',
+                  padding: '4px 8px', borderRadius: 4,
+                  background: highlight ? 'var(--amber-glow)' : 'var(--bg-raised)',
+                  border: `1px solid ${highlight ? '#f0a83233' : 'var(--border)'}`,
+                }}>
+                  <span style={{ color: 'var(--text-muted)', fontSize: 9 }}>{label}</span>
+                  <span style={{ color: highlight ? 'var(--amber)' : 'var(--text)', fontWeight: 700, fontSize: 9 }}>{value}</span>
+                </div>
+              ))}
+            </div>
           </div>
         </CollapsiblePanel>
       )}
 
       {/* ── Strategy Insights ── */}
-      <CollapsiblePanel title="Strategy Insights" defaultOpen={false}>
-        <div style={{ padding: '4px 0' }}>
+      <CollapsiblePanel title="Strategy Details" defaultOpen={false}>
+        <div style={{ padding: '6px 0' }}>
           {[
-            { label: 'Supertrend',     value: a.supertrendBull ? '▲ Bullish' : '▼ Bearish',   c: a.supertrendBull ? '#00c853' : '#ff1744' },
-            { label: 'RSI Divergence', value: divLabel ?? 'None detected',                     c: divLabel ? (divLabel.includes('Bull') ? '#00c853' : '#ff1744') : '#8b949e' },
-            { label: 'BB Squeeze',     value: a.bbSqueeze ? 'Active ⚡' : 'Normal',            c: a.bbSqueeze ? '#ffd600' : '#8b949e' },
-            { label: 'BB Breakout',    value: a.bbBreakout ? (a.bbBreakout === 'bull' ? '▲ Up' : '▼ Down') : 'None', c: a.bbBreakout === 'bull' ? '#00c853' : a.bbBreakout === 'bear' ? '#ff1744' : '#8b949e' },
-            { label: 'ICT OTE',        value: a.oteSignal ? `${a.oteSignal.direction === 'long' ? 'Long' : 'Short'} ${a.oteSignal.fibLevel.toFixed(1)}%${a.oteSignal.inZone ? ' ★' : ''}` : 'Not in zone', c: a.oteSignal?.inZone ? '#ffd600' : '#8b949e' },
-            { label: 'Alligator',      value: a.alligatorAwake ? (a.alligatorBull ? 'Awake ▲' : 'Awake ▼') : 'Sleeping', c: a.alligatorAwake ? (a.alligatorBull ? '#00c853' : '#ff1744') : '#8b949e' },
-            { label: 'Session Break',  value: a.londonBreak ? `London ${a.londonBreak.direction === 'bull' ? '▲' : '▼'} (×${a.londonBreak.strength.toFixed(1)})` : 'None', c: a.londonBreak ? '#58a6ff' : '#8b949e' },
-            { label: 'PVSRA',          value: pvsraLabel,                                      c: a.pvsra === 'neutral' ? '#8b949e' : a.pvsra.includes('bull') ? '#00c853' : '#ff1744' },
-          ].map(({ label, value, c }, i) => (
+            { label: '① Supertrend',    value: a.supertrendBull ? 'Bullish ▲' : 'Bearish ▼', active: true, bull: a.supertrendBull },
+            { label: '② RSI Divergence', value: divLabel ?? 'None',      active: !!a.rsiDiv, bull: a.rsiDiv?.type.includes('bull') },
+            { label: '③ BB Squeeze',    value: a.bbSqueeze ? '⚡ Active' : 'Normal', active: a.bbSqueeze, bull: a.bbSqueeze },
+            { label: '③ BB Breakout',   value: a.bbBreakout ? (a.bbBreakout === 'bull' ? '▲ Upper' : '▼ Lower') : 'None', active: !!a.bbBreakout, bull: a.bbBreakout === 'bull' },
+            { label: '④ ICT OTE',       value: a.oteSignal ? `${a.oteSignal.direction.toUpperCase()} ${a.oteSignal.fibLevel.toFixed(1)}%${a.oteSignal.inZone ? ' ★' : ''}` : 'Not in zone', active: !!a.oteSignal?.inZone, bull: a.oteSignal?.direction === 'long' },
+            { label: '⑤ Alligator',     value: a.alligatorAwake ? (a.alligatorBull ? 'Awake ▲' : 'Awake ▼') : 'Sleeping', active: a.alligatorAwake, bull: a.alligatorBull },
+            { label: '⑥ Session Break', value: a.londonBreak ? `London ${a.londonBreak.direction === 'bull' ? '▲' : '▼'} ×${a.londonBreak.strength.toFixed(1)}` : 'None', active: !!a.londonBreak, bull: a.londonBreak?.direction === 'bull' },
+            { label: '⑦ PVSRA Vol',     value: ({ climax_bull:'Climax ▲', climax_bear:'Climax ▼', rising_bull:'Rising ▲', rising_bear:'Rising ▼', neutral:'Neutral' })[a.pvsra], active: a.pvsra !== 'neutral', bull: a.pvsra.includes('bull') },
+          ].map(({ label, value, active, bull }, i) => (
             <div key={label} className="signal-row"
-              style={{ background: i % 2 === 0 ? '#161b22' : '#1c2128' }}>
-              <span style={{ color: '#8b949e' }}>{label}</span>
-              <span style={{ color: c, fontWeight: 600 }}>{value}</span>
+              style={{ background: i % 2 === 0 ? 'var(--bg-panel)' : 'var(--bg-raised)' }}>
+              <span style={{ color: active ? 'var(--text-dim)' : 'var(--text-muted)', flex: 1, fontSize: 10 }}>{label}</span>
+              <span style={{
+                fontWeight: active ? 700 : 400,
+                fontSize: 10,
+                color: !active ? 'var(--text-muted)' : bull ? 'var(--bull)' : 'var(--bear)',
+              }}>{value}</span>
             </div>
           ))}
         </div>
@@ -247,19 +319,19 @@ export default function AIPanel({ analysis: a, loading, pair, account, riskPct, 
 
       {/* ── Market Context ── */}
       <CollapsiblePanel title="Market Context" defaultOpen={false}>
-        <div style={{ padding: '4px 0' }}>
+        <div style={{ padding: '6px 0' }}>
           {[
-            { label: 'Trend',       value: a.trend, c: a.trend === 'BULL' ? '#00c853' : a.trend === 'BEAR' ? '#ff1744' : '#ffd600' },
-            { label: 'Structure',   value: a.lastBOS ? `${a.lastBOS.type} ${a.lastBOS.direction === 'bull' ? '▲' : '▼'}` : 'No recent break', c: '#8b949e' },
-            { label: 'Last Sweep',  value: a.recentSweep ? `${a.recentSweep.type} @ ${a.recentSweep.level.toFixed(pipSize < 0.01 ? 2 : 5)}` : 'None', c: '#8b949e' },
-            { label: 'FVG',         value: a.recentFVG ? `${a.recentFVG.type === 'bull' ? 'Bullish' : 'Bearish'} open` : 'None', c: a.recentFVG ? '#00e5ff' : '#8b949e' },
-            { label: 'Order Block', value: a.recentOB ? `${a.recentOB.type === 'bull' ? 'Demand' : 'Supply'} zone` : 'None', c: a.recentOB ? '#ffd600' : '#8b949e' },
-            { label: 'ATR (14)',    value: (a.atrValue / pipSize).toFixed(1) + ' pips', c: '#8b949e' },
-          ].map(({ label, value, c }, i) => (
-            <div key={label} className="signal-row"
-              style={{ background: i % 2 === 0 ? '#161b22' : '#1c2128' }}>
-              <span style={{ color: '#8b949e' }}>{label}</span>
-              <span style={{ color: c, fontWeight: 600 }}>{value}</span>
+            { l: 'Trend',       v: a.trend, c: a.trend === 'BULL' ? 'var(--bull)' : a.trend === 'BEAR' ? 'var(--bear)' : 'var(--amber)' },
+            { l: 'Structure',   v: a.lastBOS ? `${a.lastBOS.type} ${a.lastBOS.direction === 'bull' ? '▲' : '▼'}` : '—', c: 'var(--text-dim)' },
+            { l: 'Last Sweep',  v: a.recentSweep ? `${a.recentSweep.type} @ ${fmtLevel(a.recentSweep.level, pipSize)}` : '—', c: 'var(--text-dim)' },
+            { l: 'FVG',         v: a.recentFVG ? `${a.recentFVG.type === 'bull' ? 'Bull' : 'Bear'} open` : '—', c: a.recentFVG ? 'var(--cyan)' : 'var(--text-muted)' },
+            { l: 'Order Block', v: a.recentOB ? `${a.recentOB.type === 'bull' ? 'Demand' : 'Supply'} zone` : '—', c: a.recentOB ? 'var(--amber)' : 'var(--text-muted)' },
+            { l: 'ATR (14)',    v: `${(a.atrValue / pipSize).toFixed(1)} pips`, c: 'var(--text-dim)' },
+          ].map(({ l, v, c }, i) => (
+            <div key={l} className="signal-row"
+              style={{ background: i % 2 === 0 ? 'var(--bg-panel)' : 'var(--bg-raised)' }}>
+              <span style={{ color: 'var(--text-muted)', fontSize: 10 }}>{l}</span>
+              <span style={{ color: c, fontWeight: 600, fontSize: 10 }}>{v}</span>
             </div>
           ))}
         </div>

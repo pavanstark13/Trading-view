@@ -9,282 +9,309 @@ import { analyseMarket, type Candle, type AIAnalysis } from '@/lib/indicators'
 const TradingChart = dynamic(() => import('@/components/TradingChart'), { ssr: false })
 
 // ── Config ────────────────────────────────────────────────────────────────────
-const PAIR_GROUPS = {
-  FX:     ['EURUSD','GBPUSD','AUDUSD','NZDUSD','USDJPY','USDCHF','USDCAD','GBPJPY','EURJPY','EURCAD'],
-  Metals: ['XAUUSD','XAGUSD'],
-  Crypto: ['BTCUSD','ETHUSD'],
-}
-const ALL_PAIRS = [...PAIR_GROUPS.FX, ...PAIR_GROUPS.Metals, ...PAIR_GROUPS.Crypto]
+const FX     = ['EURUSD','GBPUSD','AUDUSD','NZDUSD','USDJPY','USDCHF','USDCAD','GBPJPY','EURJPY','EURCAD']
+const METALS = ['XAUUSD','XAGUSD']
+const CRYPTO = ['BTCUSD','ETHUSD']
+const ALL    = [...FX, ...METALS, ...CRYPTO]
 
 const INTERVALS = ['1m','5m','15m','30m','1h','4h','1d']
 
-const PIP_SIZE: Record<string, number> = {
-  USDJPY: 0.01, GBPJPY: 0.01, EURJPY: 0.01, CADJPY: 0.01, AUDJPY: 0.01,
-  XAUUSD: 0.1, XAGUSD: 0.001,
-  BTCUSD: 1.0, ETHUSD: 0.1,
+const PIP: Record<string, number> = {
+  USDJPY:0.01, GBPJPY:0.01, EURJPY:0.01,
+  XAUUSD:0.1,  XAGUSD:0.001,
+  BTCUSD:1.0,  ETHUSD:0.1,
 }
-
-const PAIR_DECIMAL: Record<string, number> = {
-  USDJPY: 3, GBPJPY: 3, EURJPY: 3,
-  XAUUSD: 2, XAGUSD: 4,
-  BTCUSD: 0, ETHUSD: 2,
+const DEC: Record<string, number> = {
+  USDJPY:3, GBPJPY:3, EURJPY:3,
+  XAUUSD:2, XAGUSD:4,
+  BTCUSD:0, ETHUSD:2,
 }
+const CAT = (p: string): 'fx' | 'metals' | 'crypto' =>
+  METALS.includes(p) ? 'metals' : CRYPTO.includes(p) ? 'crypto' : 'fx'
 
-const PAIR_CAT: Record<string, 'FX' | 'Metals' | 'Crypto'> = {
-  ...Object.fromEntries(PAIR_GROUPS.FX.map(p => [p, 'FX' as const])),
-  ...Object.fromEntries(PAIR_GROUPS.Metals.map(p => [p, 'Metals' as const])),
-  ...Object.fromEntries(PAIR_GROUPS.Crypto.map(p => [p, 'Crypto' as const])),
+const CAT_COLOR: Record<string, string> = {
+  fx: 'var(--blue)', metals: 'var(--amber)', crypto: '#ff9d00',
 }
-
-const CAT_COLOR = { FX: '#58a6ff', Metals: '#ffd600', Crypto: '#ff9d00' }
 
 const REFRESH_SEC = 300
 
-function fmtPrice(pair: string, price: number) {
-  const dec = PAIR_DECIMAL[pair] ?? 5
-  return price.toLocaleString('en-US', { minimumFractionDigits: dec, maximumFractionDigits: dec })
+function fmt(pair: string, price: number) {
+  const d = DEC[pair] ?? 5
+  return price.toLocaleString('en-US', { minimumFractionDigits: d, maximumFractionDigits: d })
+}
+
+// ── Loading skeleton ──────────────────────────────────────────────────────────
+function ChartSkeleton({ loading, error, pair }: { loading: boolean; error: string; pair: string }) {
+  if (error) return (
+    <div style={{ display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center',
+      height:'100%', gap:12 }}>
+      <div style={{ fontSize:28, opacity:0.4 }}>⚠</div>
+      <div style={{ color:'var(--bear)', fontSize:11 }}>{error}</div>
+    </div>
+  )
+  if (loading) return (
+    <div style={{ display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center',
+      height:'100%', gap:10 }}>
+      <div className="animate-pulse" style={{ fontSize:11, color:'var(--text-muted)' }}>
+        Loading {pair}…
+      </div>
+      <div style={{ display:'flex', gap:3, alignItems:'flex-end', height:32 }}>
+        {[18,28,22,35,25,20,30,22,28,16,32,24,26].map((h,i) => (
+          <div key={i} className="animate-pulse" style={{
+            width:6, height:h, borderRadius:2,
+            background:'var(--border-hi)', opacity:0.3 + (i%3)*0.2,
+            animationDelay: `${i*80}ms`,
+          }} />
+        ))}
+      </div>
+    </div>
+  )
+  return (
+    <div style={{ display:'flex', alignItems:'center', justifyContent:'center',
+      height:'100%', color:'var(--text-muted)', fontSize:11 }}>
+      Select a pair to begin
+    </div>
+  )
 }
 
 // ── Component ─────────────────────────────────────────────────────────────────
 export default function Dashboard() {
-  const [pair,       setPair]       = useState('EURUSD')
-  const [interval,   setInterval_]  = useState('1h')
-  const [candles,    setCandles]    = useState<Candle[]>([])
-  const [analysis,   setAnalysis]   = useState<AIAnalysis | null>(null)
-  const [strength,   setStrength]   = useState<Record<string,number>>({USD:50,EUR:50,GBP:50,JPY:50,CHF:50,AUD:50,NZD:50,CAD:50})
-  const [loading,    setLoading]    = useState(false)
-  const [error,      setError]      = useState('')
-  const [account,    setAccount]    = useState(10000)
-  const [riskPct,    setRiskPct]    = useState(1.0)
-  const [livePrice,  setLivePrice]  = useState<number | null>(null)
-  const [countdown,  setCountdown]  = useState(REFRESH_SEC)
-  const [lastUpdate, setLastUpdate] = useState('')
+  const [pair,      setPair]      = useState('EURUSD')
+  const [iv,        setIv]        = useState('1h')
+  const [candles,   setCandles]   = useState<Candle[]>([])
+  const [analysis,  setAnalysis]  = useState<AIAnalysis | null>(null)
+  const [strength,  setStrength]  = useState<Record<string,number>>({USD:50,EUR:50,GBP:50,JPY:50,CHF:50,AUD:50,NZD:50,CAD:50})
+  const [loading,   setLoading]   = useState(false)
+  const [error,     setError]     = useState('')
+  const [price,     setPrice]     = useState<number|null>(null)
+  const [account,   setAccount]   = useState(10000)
+  const [riskPct,   setRiskPct]   = useState(1.0)
+  const [countdown, setCountdown] = useState(REFRESH_SEC)
+  const [lastAt,    setLastAt]    = useState('')
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const refreshTimerRef  = useRef<any>(null)
+  const refreshRef  = useRef<any>(null)
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const countdownRef     = useRef<any>(null)
-  const countdownVal     = useRef(REFRESH_SEC)
+  const cdRef       = useRef<any>(null)
+  const cdVal       = useRef(REFRESH_SEC)
 
-  const pipSize = PIP_SIZE[pair] ?? 0.0001
-  const cat = PAIR_CAT[pair] ?? 'FX'
+  const pipSize = PIP[pair] ?? 0.0001
+  const cat     = CAT(pair)
+  const catCol  = CAT_COLOR[cat]
 
-  const fetchCandles = useCallback(async (p = pair, iv = interval) => {
+  const fetchCandles = useCallback(async (p = pair, interval = iv) => {
     setLoading(true); setError('')
     try {
-      const res  = await fetch(`/api/candles?symbol=${p}&interval=${iv}`)
-      const data = await res.json()
+      const r    = await fetch(`/api/candles?symbol=${p}&interval=${interval}`)
+      const data = await r.json()
       if (data.error) throw new Error(data.error)
       const cds: Candle[] = data.candles
       setCandles(cds)
-      setAnalysis(analyseMarket(cds, PIP_SIZE[p] ?? 0.0001))
-      setLivePrice(cds[cds.length - 1]?.close ?? null)
-      setLastUpdate(new Date().toLocaleTimeString())
-      countdownVal.current = REFRESH_SEC
-      setCountdown(REFRESH_SEC)
+      setAnalysis(analyseMarket(cds, PIP[p] ?? 0.0001))
+      setPrice(cds[cds.length - 1]?.close ?? null)
+      setLastAt(new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }))
+      cdVal.current = REFRESH_SEC; setCountdown(REFRESH_SEC)
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to load')
+      setError(e instanceof Error ? e.message : 'Load failed')
     } finally { setLoading(false) }
-  }, [pair, interval])
+  }, [pair, iv])
 
   const fetchStrength = useCallback(async () => {
     try {
-      const res  = await fetch('/api/strength')
-      const data = await res.json()
-      if (data.strength) setStrength(data.strength)
-    } catch { /* keep stale */ }
+      const r = await fetch('/api/strength'); const d = await r.json()
+      if (d.strength) setStrength(d.strength)
+    } catch { /**/ }
   }, [])
 
-  // Initial load + whenever pair/interval changes
-  useEffect(() => {
-    fetchCandles(pair, interval)
-    fetchStrength()
-  }, [pair, interval]) // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { fetchCandles(pair, iv); fetchStrength() }, [pair, iv]) // eslint-disable-line
 
-  // 5-minute auto-refresh
+  // 5-min auto-refresh
   useEffect(() => {
-    if (refreshTimerRef.current) clearInterval(refreshTimerRef.current)
-    // eslint-disable-next-line @typescript-eslint/no-implied-eval
-    refreshTimerRef.current = (window.setInterval as (fn: () => void, ms: number) => number)(() => {
-      fetchCandles()
-      fetchStrength()
+    if (refreshRef.current) clearInterval(refreshRef.current)
+    refreshRef.current = (window.setInterval as (f:()=>void,ms:number)=>number)(() => {
+      fetchCandles(); fetchStrength()
     }, REFRESH_SEC * 1000)
-    return () => { if (refreshTimerRef.current) clearInterval(refreshTimerRef.current) }
+    return () => clearInterval(refreshRef.current)
   }, [fetchCandles, fetchStrength])
 
-  // Countdown timer
+  // Countdown
   useEffect(() => {
-    if (countdownRef.current) clearInterval(countdownRef.current)
-    countdownRef.current = (window.setInterval as (fn: () => void, ms: number) => number)(() => {
-      countdownVal.current = Math.max(0, countdownVal.current - 1)
-      setCountdown(countdownVal.current)
+    if (cdRef.current) clearInterval(cdRef.current)
+    cdRef.current = (window.setInterval as (f:()=>void,ms:number)=>number)(() => {
+      cdVal.current = Math.max(0, cdVal.current - 1)
+      setCountdown(cdVal.current)
     }, 1000)
-    return () => { if (countdownRef.current) clearInterval(countdownRef.current) }
+    return () => clearInterval(cdRef.current)
   }, [])
 
-  const handlePairChange = (p: string) => {
-    setPair(p)
-    setCandles([])
-    setAnalysis(null)
-    setLivePrice(null)
-  }
+  const handlePair = (p: string) => { setPair(p); setCandles([]); setAnalysis(null); setPrice(null) }
 
-  const biasCol = analysis?.bias === 'BULLISH' ? '#00c853' : analysis?.bias === 'BEARISH' ? '#ff1744' : '#ffd600'
-  const catCol  = CAT_COLOR[cat]
+  const biasCol = analysis?.bias === 'BULLISH' ? 'var(--bull)' : analysis?.bias === 'BEARISH' ? 'var(--bear)' : 'var(--amber)'
+  const mm = String(Math.floor(countdown / 60)).padStart(2,'0')
+  const ss = String(countdown % 60).padStart(2,'0')
 
-  const mm = String(Math.floor(countdown / 60)).padStart(2, '0')
-  const ss = String(countdown % 60).padStart(2, '0')
+  const NAV_SEP = <div className="nav-sep" />
 
   return (
-    <div style={{ display:'flex', flexDirection:'column', height:'100vh', background:'#0d1117', overflow:'hidden' }}>
+    <div style={{ display:'flex', flexDirection:'column', height:'100vh', background:'var(--bg)', overflow:'hidden' }}>
 
-      {/* ── Nav Row 1: Logo + Pairs ── */}
-      <nav style={{ display:'flex', alignItems:'center', gap:6, padding:'5px 10px',
-        background:'#161b22', borderBottom:'1px solid #21262d', flexShrink:0, flexWrap:'wrap' }}>
+      {/* ═══ NAV ROW 1 — Pairs ═══════════════════════════════════════════════ */}
+      <div className="nav-row" style={{ padding:'5px 14px' }}>
 
-        <span style={{ color:'#58a6ff', fontWeight:800, fontSize:13, marginRight:6, letterSpacing:'-0.02em' }}>
-          🤖 FOREX AI
-        </span>
-
-        {/* FX */}
-        <span style={{ fontSize:9, color:'#58a6ff88', fontWeight:700, letterSpacing:'0.1em', marginRight:2 }}>FX</span>
-        {PAIR_GROUPS.FX.map(p => (
-          <button key={p} onClick={() => handlePairChange(p)} style={{
-            padding:'3px 7px', fontSize:10, fontWeight:600, borderRadius:4,
-            cursor:'pointer', border:'none', fontFamily:'inherit',
-            background: pair === p ? '#58a6ff' : 'transparent',
-            color:      pair === p ? '#0d1117'  : '#6e7681',
-          }}>{p}</button>
-        ))}
-
-        {/* Metals */}
-        <span style={{ fontSize:9, color:'#ffd60088', fontWeight:700, letterSpacing:'0.1em', margin:'0 2px' }}>METALS</span>
-        {PAIR_GROUPS.Metals.map(p => (
-          <button key={p} onClick={() => handlePairChange(p)} style={{
-            padding:'3px 7px', fontSize:10, fontWeight:600, borderRadius:4,
-            cursor:'pointer', border:'none', fontFamily:'inherit',
-            background: pair === p ? '#ffd600' : 'transparent',
-            color:      pair === p ? '#0d1117'  : '#6e7681',
-          }}>{p}</button>
-        ))}
-
-        {/* Crypto */}
-        <span style={{ fontSize:9, color:'#ff9d0088', fontWeight:700, letterSpacing:'0.1em', margin:'0 2px' }}>CRYPTO</span>
-        {PAIR_GROUPS.Crypto.map(p => (
-          <button key={p} onClick={() => handlePairChange(p)} style={{
-            padding:'3px 7px', fontSize:10, fontWeight:600, borderRadius:4,
-            cursor:'pointer', border:'none', fontFamily:'inherit',
-            background: pair === p ? '#ff9d00' : 'transparent',
-            color:      pair === p ? '#0d1117'  : '#6e7681',
-          }}>{p}</button>
-        ))}
-
-        {/* Live price */}
-        {livePrice !== null && (
-          <div style={{ marginLeft:'auto', padding:'3px 10px', borderRadius:4, fontSize:12, fontWeight:800,
-            background: catCol + '18', border:`1px solid ${catCol}44`, color: catCol }}>
-            {fmtPrice(pair, livePrice)}
+        {/* Logo */}
+        <div style={{ display:'flex', alignItems:'center', gap:7, marginRight:10, flexShrink:0 }}>
+          <div style={{
+            width:26, height:26, borderRadius:6,
+            background:'linear-gradient(135deg,#1b3a7a,#0f2050)',
+            border:'1px solid #2d5090',
+            display:'flex', alignItems:'center', justifyContent:'center',
+            fontSize:14,
+          }}>🤖</div>
+          <div>
+            <div style={{ fontSize:11, fontWeight:800, color:'var(--text)', letterSpacing:'-0.01em', lineHeight:1.1 }}>FOREX AI</div>
+            <div style={{ fontSize:7.5, color:'var(--text-muted)', letterSpacing:'0.12em', textTransform:'uppercase' }}>Terminal</div>
           </div>
-        )}
-      </nav>
+        </div>
 
-      {/* ── Nav Row 2: Intervals + Controls ── */}
-      <div style={{ display:'flex', alignItems:'center', gap:6, padding:'4px 10px',
-        background:'#0d1117', borderBottom:'1px solid #21262d', flexShrink:0, flexWrap:'wrap' }}>
+        {NAV_SEP}
 
-        {/* Intervals */}
-        <div style={{ display:'flex', gap:2 }}>
-          {INTERVALS.map(iv => (
-            <button key={iv} onClick={() => setInterval_(iv)} style={{
-              padding:'3px 8px', fontSize:10, fontWeight:600, borderRadius:4,
-              cursor:'pointer', border:'none', fontFamily:'inherit',
-              background: interval === iv ? '#21262d' : 'transparent',
-              color:      interval === iv ? '#e6edf3'  : '#6e7681',
-            }}>{iv}</button>
+        {/* FX pairs */}
+        <div style={{ display:'flex', gap:1, alignItems:'center' }}>
+          <span style={{ fontSize:7.5, color:'var(--blue)', fontWeight:800, letterSpacing:'.12em',
+            padding:'1px 5px', background:'var(--blue-glow)', borderRadius:3, marginRight:3 }}>FX</span>
+          {FX.map(p => (
+            <button key={p} className={`pair-btn pair-btn-fx${pair===p?' active':''}`} onClick={() => handlePair(p)}>
+              {p}
+            </button>
           ))}
         </div>
 
-        <div style={{ width:1, height:16, background:'#21262d', margin:'0 2px' }} />
+        {NAV_SEP}
 
-        {/* Account & Risk */}
-        <label style={{ fontSize:10, color:'#8b949e', display:'flex', alignItems:'center', gap:4 }}>
-          $
+        {/* Metals */}
+        <div style={{ display:'flex', gap:1, alignItems:'center' }}>
+          <span style={{ fontSize:7.5, color:'var(--amber)', fontWeight:800, letterSpacing:'.12em',
+            padding:'1px 5px', background:'var(--amber-glow)', borderRadius:3, marginRight:3 }}>METALS</span>
+          {METALS.map(p => (
+            <button key={p} className={`pair-btn pair-btn-metals${pair===p?' active':''}`} onClick={() => handlePair(p)}>
+              {p}
+            </button>
+          ))}
+        </div>
+
+        {NAV_SEP}
+
+        {/* Crypto */}
+        <div style={{ display:'flex', gap:1, alignItems:'center' }}>
+          <span style={{ fontSize:7.5, color:'#ff9d00', fontWeight:800, letterSpacing:'.12em',
+            padding:'1px 5px', background:'#ff9d0018', borderRadius:3, marginRight:3 }}>CRYPTO</span>
+          {CRYPTO.map(p => (
+            <button key={p} className={`pair-btn pair-btn-crypto${pair===p?' active':''}`} onClick={() => handlePair(p)}>
+              {p}
+            </button>
+          ))}
+        </div>
+
+        {/* Live price */}
+        {price !== null && (
+          <div style={{ marginLeft:'auto', display:'flex', alignItems:'center', gap:8, flexShrink:0 }}>
+            <div className="live-dot" style={{ background: catCol }} />
+            <div style={{
+              fontSize:14, fontWeight:800,
+              color: catCol,
+              letterSpacing:'-0.01em',
+              fontVariantNumeric:'tabular-nums',
+              textShadow:`0 0 20px ${catCol}66`,
+            }}>{fmt(pair, price)}</div>
+          </div>
+        )}
+      </div>
+
+      {/* ═══ NAV ROW 2 — Controls ════════════════════════════════════════════ */}
+      <div className="nav-row" style={{ padding:'4px 14px', background:'var(--bg)', borderBottom:'1px solid var(--border)' }}>
+
+        {/* Intervals */}
+        <div style={{ display:'flex', gap:1 }}>
+          {INTERVALS.map(t => (
+            <button key={t} className={`iv-btn${iv===t?' active':''}`} onClick={() => setIv(t)}>{t}</button>
+          ))}
+        </div>
+
+        {NAV_SEP}
+
+        {/* Account */}
+        <label style={{ display:'flex', alignItems:'center', gap:5, color:'var(--text-muted)', fontSize:10 }}>
+          Account
           <input type="number" value={account} onChange={e => setAccount(+e.target.value)}
-            style={{ width:68, padding:'2px 5px', background:'#21262d',
-              border:'1px solid #30363d', borderRadius:4, color:'#e6edf3',
-              fontSize:10, fontFamily:'inherit' }} />
+            className="fx-input" style={{ width:72 }} />
         </label>
-        <label style={{ fontSize:10, color:'#8b949e', display:'flex', alignItems:'center', gap:4 }}>
-          R%
+        <label style={{ display:'flex', alignItems:'center', gap:5, color:'var(--text-muted)', fontSize:10 }}>
+          Risk %
           <input type="number" value={riskPct} onChange={e => setRiskPct(+e.target.value)}
-            step={0.1} min={0.1} max={10}
-            style={{ width:42, padding:'2px 5px', background:'#21262d',
-              border:'1px solid #30363d', borderRadius:4, color:'#e6edf3',
-              fontSize:10, fontFamily:'inherit' }} />
+            step={.1} min={.1} max={10} className="fx-input" style={{ width:46 }} />
         </label>
 
-        <div style={{ width:1, height:16, background:'#21262d', margin:'0 2px' }} />
+        {NAV_SEP}
 
-        {/* Refresh button */}
-        <button onClick={() => fetchCandles()} disabled={loading} style={{
-          padding:'3px 10px', fontSize:10, borderRadius:4, cursor:'pointer',
-          background:'#21262d', border:'1px solid #30363d', color:'#e6edf3',
-          fontFamily:'inherit', opacity: loading ? 0.5 : 1,
-        }}>{loading ? '⟳ …' : '⟳ Refresh'}</button>
+        {/* Refresh */}
+        <button className="btn btn-ghost" onClick={() => fetchCandles()} disabled={loading}
+          style={{ padding:'3px 10px' }}>
+          {loading ? '⟳ …' : '⟳ Refresh'}
+        </button>
 
         {/* Bias badge */}
         {analysis && (
-          <div style={{ padding:'3px 10px', borderRadius:4, fontSize:11, fontWeight:800,
-            background: biasCol + '18', border:`1px solid ${biasCol}44`, color: biasCol,
-            letterSpacing: '0.06em' }}>
+          <div style={{
+            padding:'3px 12px', borderRadius:5, fontSize:11, fontWeight:800,
+            background: `${biasCol}18`, border:`1px solid ${biasCol}44`, color:biasCol,
+            letterSpacing:'0.07em',
+          }}>
             {analysis.bias}
           </div>
         )}
 
-        {/* Countdown */}
-        <div style={{ marginLeft:'auto', display:'flex', alignItems:'center', gap:6, fontSize:10 }}>
-          {lastUpdate && <span style={{ color:'#444d56' }}>{lastUpdate}</span>}
-          <div style={{
-            padding:'2px 8px', borderRadius:4, fontSize:10, fontWeight:700, fontVariantNumeric:'tabular-nums',
-            background: countdown < 30 ? '#3d200d' : '#21262d',
-            color: countdown < 30 ? '#ff6d00' : '#8b949e',
-            border: `1px solid ${countdown < 30 ? '#ff6d0044' : '#30363d'}`,
-          }}>
-            ⟳ {mm}:{ss}
+        <div style={{ marginLeft:'auto', display:'flex', alignItems:'center', gap:8 }}>
+          {lastAt && <span style={{ fontSize:9, color:'var(--text-muted)' }}>{lastAt}</span>}
+          <div className={`countdown ${countdown < 30 ? 'countdown-warn' : 'countdown-ok'}`}>
+            <span style={{ fontSize:8, opacity:0.6 }}>REFRESH IN</span>
+            {mm}:{ss}
           </div>
         </div>
       </div>
 
-      {/* ── Error ── */}
+      {/* ═══ Error bar ═══════════════════════════════════════════════════════ */}
       {error && (
-        <div style={{ background:'#3d0d14', color:'#ff1744', padding:'5px 12px',
-          fontSize:11, borderBottom:'1px solid #ff174440', flexShrink:0 }}>
+        <div style={{ background:'var(--bear-glow)', color:'var(--bear)',
+          padding:'5px 14px', fontSize:10, border:'none',
+          borderBottom:'1px solid #ff4e6a33', flexShrink:0 }}>
           ⚠ {error}
         </div>
       )}
 
-      {/* ── Body ── */}
+      {/* ═══ Body ════════════════════════════════════════════════════════════ */}
       <div style={{ display:'flex', flex:1, overflow:'hidden', gap:6, padding:6 }}>
 
-        {/* Chart */}
-        <div style={{ flex:1, minWidth:0,
-          border:`1px solid ${catCol}55`,
-          borderRadius:8, overflow:'hidden', background:'#0d1117',
-          boxShadow: `0 0 16px ${catCol}18` }}>
+        {/* ── Chart panel ── */}
+        <div style={{
+          flex:1, minWidth:0,
+          borderRadius:8, overflow:'hidden',
+          background:'var(--bg)',
+          border:`1px solid ${catCol}44`,
+          boxShadow:`0 0 30px ${catCol}0e, inset 0 0 0 0 transparent`,
+          position:'relative',
+        }}>
           {candles.length > 0
-            ? <TradingChart candles={candles} pair={`${pair}  ·  ${interval}`} />
-            : <div style={{ display:'flex', alignItems:'center', justifyContent:'center',
-                height:'100%', color:'#8b949e', fontSize:12 }}>
-                {loading
-                  ? <span className="animate-pulse">⟳ Loading {pair} {interval}…</span>
-                  : 'No data — click Refresh'}
-              </div>
+            ? <TradingChart candles={candles} pair={`${pair}  ·  ${iv}`} pipSize={pipSize} />
+            : <ChartSkeleton loading={loading} error={error} pair={pair} />
           }
         </div>
 
-        {/* Sidebar */}
-        <div style={{ width:280, display:'flex', flexDirection:'column',
-          gap:5, overflowY:'auto', flexShrink:0 }}>
+        {/* ── Sidebar ── */}
+        <div style={{
+          width:300, display:'flex', flexDirection:'column',
+          gap:5, overflowY:'auto', flexShrink:0,
+          paddingRight:2,
+        }}>
           <AIPanel analysis={analysis} loading={loading && !analysis}
             pair={pair} account={account} riskPct={riskPct} pipSize={pipSize} />
           <StrategyFeed candles={candles} pipSize={pipSize} />
@@ -292,12 +319,23 @@ export default function Dashboard() {
         </div>
       </div>
 
-      {/* Footer */}
-      <div style={{ padding:'3px 12px', background:'#161b22',
-        borderTop:'1px solid #21262d', fontSize:9, color:'#444d56',
-        display:'flex', justifyContent:'space-between', flexShrink:0 }}>
-        <span>Forex AI · SMC + ICT + 7 Strategies · {ALL_PAIRS.length} pairs · Data: Yahoo Finance · 5-min refresh</span>
-        <span>Educational use only — not financial advice</span>
+      {/* ═══ Footer ══════════════════════════════════════════════════════════ */}
+      <div style={{
+        display:'flex', justifyContent:'space-between', alignItems:'center',
+        padding:'3px 14px', flexShrink:0,
+        background:'var(--bg-panel)', borderTop:'1px solid var(--border)',
+        fontSize:8.5, color:'var(--text-muted)',
+      }}>
+        <div style={{ display:'flex', gap:12, alignItems:'center' }}>
+          <span>Forex AI Terminal</span>
+          <span style={{ color:'var(--border-hi)' }}>·</span>
+          <span>SMC + ICT + 7 Strategies</span>
+          <span style={{ color:'var(--border-hi)' }}>·</span>
+          <span>{ALL.length} pairs</span>
+          <span style={{ color:'var(--border-hi)' }}>·</span>
+          <span>Data: Yahoo Finance</span>
+        </div>
+        <span style={{ color:'var(--text-muted)' }}>Educational use only — not financial advice</span>
       </div>
     </div>
   )
