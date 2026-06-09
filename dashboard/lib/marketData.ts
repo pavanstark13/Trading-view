@@ -52,8 +52,11 @@ function tdToChartFormat(values: Array<{
   const close: number[] = [], volume: number[] = []
 
   for (const v of sorted) {
-    // datetime can be "2024-12-17" or "2024-12-17 14:00:00"
-    const ts = Math.floor(new Date(v.datetime.replace(' ', 'T') + 'Z').getTime() / 1000)
+    // datetime is "2024-12-17" (daily) or "2024-12-17 14:00:00" (intraday)
+    const iso = v.datetime.includes(' ')
+      ? v.datetime.replace(' ', 'T') + 'Z'   // intraday → UTC ISO
+      : v.datetime + 'T00:00:00Z'             // daily → midnight UTC
+    const ts = Math.floor(new Date(iso).getTime() / 1000)
     const c  = parseFloat(v.close)
     if (isNaN(ts) || isNaN(c) || c <= 0) continue
     timestamps.push(ts)
@@ -67,21 +70,36 @@ function tdToChartFormat(values: Array<{
   return { chart: { result: [{ timestamp: timestamps, indicators: { quote: [{ open, high, low, close, volume }] } }] } }
 }
 
-async function fetchTwelveData(yahooSymbol: string, interval: string): Promise<unknown> {
+// Compute how many candles are needed for a given range + interval combination
+function calcOutputsize(range: string, interval: string): string {
+  const rangeHours: Record<string, number> = {
+    '1d': 24, '5d': 120, '7d': 168, '14d': 336, '30d': 720,
+    '60d': 1440, '90d': 2160, '180d': 4320, '1y': 8760, '2y': 17520,
+  }
+  const candlesPerHour: Record<string, number> = {
+    '1m': 60, '5m': 12, '15m': 4, '30m': 2, '1h': 1,
+    '4h': 0.25, '1d': 1 / 24, '1wk': 1 / 168,
+  }
+  const hours   = rangeHours[range]          ?? 720
+  const perHour = candlesPerHour[interval]   ?? 1
+  // Add 20% buffer; cap at 5000 (TwelveData per-request max)
+  return String(Math.min(Math.ceil(hours * perHour * 1.2) + 10, 5000))
+}
+
+async function fetchTwelveData(yahooSymbol: string, interval: string, range: string): Promise<unknown> {
   const apiKey = process.env.TWELVE_DATA_API_KEY
   if (!apiKey) throw new Error('TWELVE_DATA_API_KEY not configured')
 
   const { symbol, exchange } = toTwelveData(yahooSymbol)
   const tdInterval = TD_INTERVAL[interval] ?? '1h'
-  // Use larger outputsize for daily charts, conservative for intraday
-  const outputsize = tdInterval === '1day' || tdInterval === '1week' ? '1000' : '500'
+  const outputsize = calcOutputsize(range, interval)
 
   const params = new URLSearchParams({ symbol, interval: tdInterval, outputsize, apikey: apiKey, format: 'JSON' })
   if (exchange) params.set('exchange', exchange)
 
   const res = await fetch(`https://api.twelvedata.com/time_series?${params}`, {
     headers: { 'User-Agent': 'trading-dashboard/1.0' },
-    next: { revalidate: 300 },          // 5-minute server-side cache
+    next: { revalidate: 300 },
   })
 
   if (!res.ok) throw new Error(`TwelveData HTTP ${res.status} for ${symbol}`)
@@ -94,7 +112,6 @@ async function fetchTwelveData(yahooSymbol: string, interval: string): Promise<u
   }
 
   if (data.status === 'error') {
-    // Rate-limit hit — propagate clearly so caller can log/alert
     throw new Error(`TwelveData error ${data.code ?? ''}: ${data.message ?? 'unknown'}`)
   }
 
@@ -108,7 +125,7 @@ async function fetchTwelveData(yahooSymbol: string, interval: string): Promise<u
 export async function fetchChartData(yahooSymbol: string, interval: string, range: string): Promise<unknown> {
   if (process.env.TWELVE_DATA_API_KEY) {
     try {
-      return await fetchTwelveData(yahooSymbol, interval)
+      return await fetchTwelveData(yahooSymbol, interval, range)
     } catch (err) {
       // Log and fall through to Yahoo Finance
       console.warn('[marketData] TwelveData failed, falling back to Yahoo:', (err as Error).message)
