@@ -8,7 +8,7 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { INDIA_MAP } from '@/lib/indianMarket'
-import { fetchYahooChart, parseYahooChart } from '@/lib/yahooFinance'
+import { fetchChartData, parseChartData } from '@/lib/marketData'
 import {
   rsi, macd, ema, supertrend, bollingerBands, stoch, atr,
 } from '@/lib/indicators'
@@ -228,8 +228,8 @@ export async function POST(req: NextRequest) {
   const yInterval   = IV_MAP[interval]    ?? '1h'
 
   try {
-    const json = await fetchYahooChart(yahooSymbol, yInterval, range)
-    const candles: Candle[] = parseYahooChart(json).filter(c => c.close > 0 && c.open > 0)
+    const json = await fetchChartData(yahooSymbol, yInterval, range)
+    const candles: Candle[] = parseChartData(json).filter(c => c.close > 0 && c.open > 0)
 
     if (candles.length < 80) {
       return NextResponse.json({ error: `Only ${candles.length} candles — need at least 80.` }, { status: 422 })

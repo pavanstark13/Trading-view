@@ -9,7 +9,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { STRATEGY_MAP } from '@/lib/strategies'
 import { runBacktest } from '@/lib/backtest'
-import { fetchYahooChart, parseYahooChart } from '@/lib/yahooFinance'
+import { fetchChartData, parseChartData } from '@/lib/marketData'
 import type { Candle } from '@/lib/indicators'
 
 const YAHOO_MAP: Record<string, string> = {
@@ -48,8 +48,8 @@ export async function GET(req: NextRequest) {
   const yInterval   = IV_MAP[interval] ?? '1d'
 
   try {
-    const json     = await fetchYahooChart(yahooSymbol, yInterval, range)
-    const candles: Candle[] = parseYahooChart(json).filter(c => c.close > 0 && c.open > 0)
+    const json     = await fetchChartData(yahooSymbol, yInterval, range)
+    const candles: Candle[] = parseChartData(json).filter(c => c.close > 0 && c.open > 0)
 
     if (candles.length < strategy.minCandles + 10) {
       return NextResponse.json({

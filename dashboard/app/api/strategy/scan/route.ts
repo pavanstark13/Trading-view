@@ -9,7 +9,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { runAllStrategies } from '@/lib/strategies'
 import { ema, rsi, macd, atr, sma } from '@/lib/indicators'
-import { fetchYahooChart, parseYahooChart } from '@/lib/yahooFinance'
+import { fetchChartData, parseChartData } from '@/lib/marketData'
 import type { Candle } from '@/lib/indicators'
 
 // ── Symbol list ───────────────────────────────────────────────────────────────
@@ -73,8 +73,8 @@ async function scanSymbol(
   const range     = RANGE_MAP[interval] ?? '30d'
   const yInterval = IV_MAP[interval] ?? '1h'
 
-  const json    = await fetchYahooChart(yahoo, yInterval, range)
-  const candles: Candle[] = parseYahooChart(json)
+  const json    = await fetchChartData(yahoo, yInterval, range)
+  const candles: Candle[] = parseChartData(json)
 
   if (candles.length < 30) throw new Error('Insufficient candles')
 

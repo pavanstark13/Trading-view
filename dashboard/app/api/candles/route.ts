@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { INDIA_MAP } from '@/lib/indianMarket'
-import { fetchYahooChart, parseYahooChart } from '@/lib/yahooFinance'
+import { fetchChartData, parseChartData } from '@/lib/marketData'
 
 const YAHOO_MAP: Record<string, string> = {
   BTCUSD: 'BTC-USD',
@@ -34,8 +34,8 @@ export async function GET(req: NextRequest) {
   const range = RANGE_MAP[interval] ?? '30d'
 
   try {
-    const json = await fetchYahooChart(yahooSymbol, yInterval, range)
-    const candles = parseYahooChart(json)
+    const json = await fetchChartData(yahooSymbol, yInterval, range)
+    const candles = parseChartData(json)
     if (!candles.length) {
       return NextResponse.json({ candles: [], symbol, interval, warning: 'No candles returned for this symbol/interval' })
     }
