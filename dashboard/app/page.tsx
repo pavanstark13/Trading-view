@@ -5,6 +5,7 @@ import AIPanel from '@/components/AIPanel'
 import StrengthMeter from '@/components/StrengthMeter'
 import StrategyFeed from '@/components/StrategyFeed'
 import IndicatorPanel from '@/components/IndicatorPanel'
+import BrokerPanel from '@/components/BrokerPanel'
 import { analyseMarket, type Candle, type AIAnalysis } from '@/lib/indicators'
 import { DEFAULT_INDICATORS, type IndicatorConfig } from '@/components/TradingChart'
 
@@ -322,6 +323,8 @@ export default function Dashboard() {
         }}>
           <AIPanel analysis={analysis} loading={loading && !analysis}
             pair={pair} account={account} riskPct={riskPct} pipSize={pipSize} />
+          <BrokerPanel pair={pair} analysis={analysis} pipSize={pipSize}
+            account={account} riskPct={riskPct} />
           <StrategyFeed candles={candles} pipSize={pipSize} />
           <StrengthMeter strength={strength} />
         </div>
