@@ -1,10 +1,18 @@
 import { NextRequest, NextResponse } from 'next/server'
 
+import { INDIA_MAP } from '@/lib/indianMarket'
+
 const YAHOO_MAP: Record<string, string> = {
   BTCUSD: 'BTC-USD',
   ETHUSD: 'ETH-USD',
   XAUUSD: 'XAUUSD=X',
   XAGUSD: 'XAGUSD=X',
+}
+
+function toYahoo(symbol: string): string {
+  if (YAHOO_MAP[symbol])        return YAHOO_MAP[symbol]
+  if (INDIA_MAP[symbol])        return INDIA_MAP[symbol].yahoo
+  return symbol + '=X'          // forex default
 }
 
 const RANGE_MAP: Record<string, string> = {
@@ -21,7 +29,7 @@ export async function GET(req: NextRequest) {
   const symbol = req.nextUrl.searchParams.get('symbol') ?? 'EURUSD'
   const interval = req.nextUrl.searchParams.get('interval') ?? '1h'
 
-  const yahooSymbol = YAHOO_MAP[symbol] ?? (symbol + '=X')
+  const yahooSymbol = toYahoo(symbol)
   const yInterval = IV_MAP[interval] ?? '1h'
   const range = RANGE_MAP[interval] ?? '30d'
 

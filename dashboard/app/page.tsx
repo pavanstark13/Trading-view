@@ -8,6 +8,7 @@ import IndicatorPanel from '@/components/IndicatorPanel'
 import BrokerPanel from '@/components/BrokerPanel'
 import { analyseMarket, type Candle, type AIAnalysis } from '@/lib/indicators'
 import { DEFAULT_INDICATORS, type IndicatorConfig } from '@/components/TradingChart'
+import { INDIA_MAP, INDEX_SYMBOLS, STOCK_SYMBOLS } from '@/lib/indianMarket'
 
 const TradingChart = dynamic(() => import('@/components/TradingChart'), { ssr: false })
 
@@ -15,7 +16,9 @@ const TradingChart = dynamic(() => import('@/components/TradingChart'), { ssr: f
 const FX     = ['EURUSD','GBPUSD','AUDUSD','NZDUSD','USDJPY','USDCHF','USDCAD','GBPJPY','EURJPY','EURCAD']
 const METALS = ['XAUUSD','XAGUSD']
 const CRYPTO = ['BTCUSD','ETHUSD']
-const ALL    = [...FX, ...METALS, ...CRYPTO]
+const NSE_INDEX = INDEX_SYMBOLS
+const NSE_STOCK = STOCK_SYMBOLS
+const ALL    = [...FX, ...METALS, ...CRYPTO, ...NSE_INDEX, ...NSE_STOCK]
 
 const INTERVALS = ['1m','5m','15m','30m','1h','4h','1d']
 
@@ -29,18 +32,26 @@ const DEC: Record<string, number> = {
   XAUUSD:2, XAGUSD:4,
   BTCUSD:0, ETHUSD:2,
 }
-const CAT = (p: string): 'fx' | 'metals' | 'crypto' =>
-  METALS.includes(p) ? 'metals' : CRYPTO.includes(p) ? 'crypto' : 'fx'
+
+type PairCat = 'fx' | 'metals' | 'crypto' | 'nse-index' | 'nse-stock'
+const CAT = (p: string): PairCat =>
+  METALS.includes(p) ? 'metals'
+  : CRYPTO.includes(p) ? 'crypto'
+  : NSE_INDEX.includes(p) ? 'nse-index'
+  : NSE_STOCK.includes(p) ? 'nse-stock'
+  : 'fx'
 
 const CAT_COLOR: Record<string, string> = {
   fx: 'var(--blue)', metals: 'var(--amber)', crypto: '#ff9d00',
+  'nse-index': '#22d3ee', 'nse-stock': '#a78bfa',
 }
 
 const REFRESH_SEC = 300
 
 function fmt(pair: string, price: number) {
-  const d = DEC[pair] ?? 5
-  return price.toLocaleString('en-US', { minimumFractionDigits: d, maximumFractionDigits: d })
+  const d = DEC[pair] ?? (INDIA_MAP[pair] ? 2 : 5)
+  const locale = INDIA_MAP[pair] ? 'en-IN' : 'en-US'
+  return price.toLocaleString(locale, { minimumFractionDigits: d, maximumFractionDigits: d })
 }
 
 // ── Loading skeleton ──────────────────────────────────────────────────────────
@@ -99,7 +110,7 @@ export default function Dashboard() {
   const cdRef       = useRef<any>(null)
   const cdVal       = useRef(REFRESH_SEC)
 
-  const pipSize = PIP[pair] ?? 0.0001
+  const pipSize = PIP[pair] ?? INDIA_MAP[pair]?.pipSize ?? 0.0001
   const cat     = CAT(pair)
   const catCol  = CAT_COLOR[cat]
 
@@ -211,6 +222,36 @@ export default function Dashboard() {
             padding:'1px 5px', background:'#ff9d0018', borderRadius:3, marginRight:3 }}>CRYPTO</span>
           {CRYPTO.map(p => (
             <button key={p} className={`pair-btn pair-btn-crypto${pair===p?' active':''}`} onClick={() => handlePair(p)}>
+              {p}
+            </button>
+          ))}
+        </div>
+
+        {NAV_SEP}
+
+        {/* NSE Indices */}
+        <div style={{ display:'flex', gap:1, alignItems:'center' }}>
+          <span style={{ fontSize:7.5, color:'#22d3ee', fontWeight:800, letterSpacing:'.12em',
+            padding:'1px 5px', background:'#22d3ee18', borderRadius:3, marginRight:3 }}>NSE IDX</span>
+          {NSE_INDEX.map(p => (
+            <button key={p} className={`pair-btn${pair===p?' active':''}`}
+              style={pair===p ? { borderColor:'#22d3ee88', color:'#22d3ee', background:'#22d3ee18' } : {}}
+              onClick={() => handlePair(p)}>
+              {p}
+            </button>
+          ))}
+        </div>
+
+        {NAV_SEP}
+
+        {/* NSE Stocks */}
+        <div style={{ display:'flex', gap:1, alignItems:'center', flexWrap:'wrap' }}>
+          <span style={{ fontSize:7.5, color:'#a78bfa', fontWeight:800, letterSpacing:'.12em',
+            padding:'1px 5px', background:'#a78bfa18', borderRadius:3, marginRight:3 }}>NSE F&O</span>
+          {NSE_STOCK.map(p => (
+            <button key={p} className={`pair-btn${pair===p?' active':''}`}
+              style={pair===p ? { borderColor:'#a78bfa88', color:'#a78bfa', background:'#a78bfa18' } : {}}
+              onClick={() => handlePair(p)}>
               {p}
             </button>
           ))}
@@ -342,7 +383,9 @@ export default function Dashboard() {
           <span style={{ color:'var(--border-hi)' }}>·</span>
           <span>SMC + ICT + 7 Strategies</span>
           <span style={{ color:'var(--border-hi)' }}>·</span>
-          <span>{ALL.length} pairs</span>
+          <span>{ALL.length} instruments</span>
+          <span style={{ color:'var(--border-hi)' }}>·</span>
+          <span>NSE · MCX · CDS · Forex · Crypto</span>
           <span style={{ color:'var(--border-hi)' }}>·</span>
           <span>Data: Yahoo Finance</span>
         </div>
