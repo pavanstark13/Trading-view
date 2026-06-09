@@ -8,6 +8,7 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { INDIA_MAP } from '@/lib/indianMarket'
+import { fetchYahooChart, parseYahooChart } from '@/lib/yahooFinance'
 import {
   rsi, macd, ema, supertrend, bollingerBands, stoch, atr,
 } from '@/lib/indicators'
@@ -227,24 +228,8 @@ export async function POST(req: NextRequest) {
   const yInterval   = IV_MAP[interval]    ?? '1h'
 
   try {
-    const url = `https://query1.finance.yahoo.com/v8/finance/chart/${yahooSymbol}?interval=${yInterval}&range=${range}`
-    const res = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0' } })
-    if (!res.ok) throw new Error(`Yahoo Finance returned ${res.status} for ${yahooSymbol}`)
-
-    const json   = await res.json()
-    const result = json?.chart?.result?.[0]
-    if (!result) throw new Error('No chart data from Yahoo Finance')
-
-    const timestamps: number[] = result.timestamp ?? []
-    const ohlcv = result.indicators?.quote?.[0]
-    if (!ohlcv) throw new Error('No OHLCV data in Yahoo response')
-
-    const candles: Candle[] = timestamps.map((t: number, i: number) => ({
-      time: t, open: ohlcv.open[i], high: ohlcv.high[i],
-      low: ohlcv.low[i], close: ohlcv.close[i], volume: ohlcv.volume[i] ?? 0,
-    })).filter((c: Candle) =>
-      c.open != null && c.close != null && !isNaN(c.close) && c.close > 0
-    )
+    const json = await fetchYahooChart(yahooSymbol, yInterval, range)
+    const candles: Candle[] = parseYahooChart(json).filter(c => c.close > 0 && c.open > 0)
 
     if (candles.length < 80) {
       return NextResponse.json({ error: `Only ${candles.length} candles — need at least 80.` }, { status: 422 })

@@ -45,23 +45,23 @@ function logEntry(
 // ── status badge ─────────────────────────────────────────────────────────────
 
 const STATUS_COLOR: Record<AutoTraderState['status'], string> = {
-  IDLE:         'var(--os-text-dim)',
-  SCANNING:     'var(--os-accent)',
-  SIGNAL_FOUND: 'var(--os-yellow)',
-  RISK_CHECK:   'var(--os-yellow)',
+  IDLE:         'var(--os-t3)',
+  SCANNING:     'var(--os-blue)',
+  SIGNAL_FOUND: 'var(--os-amber)',
+  RISK_CHECK:   'var(--os-amber)',
   BLOCKED:      'var(--os-red)',
-  PLACING_ORDER:'var(--os-accent)',
+  PLACING_ORDER:'var(--os-blue)',
   ACTIVE:       'var(--os-green)',
 }
 
 const LOG_COLOR: Record<AutoTraderLogEntry['type'], string> = {
-  INFO:       'var(--os-text-dim)',
-  SIGNAL:     'var(--os-yellow)',
+  INFO:       'var(--os-t3)',
+  SIGNAL:     'var(--os-amber)',
   RISK_BLOCK: 'var(--os-red)',
-  ORDER:      'var(--os-accent)',
+  ORDER:      'var(--os-blue)',
   FILL:       'var(--os-green)',
   ERROR:      'var(--os-red)',
-  RESET:      'var(--os-text-dim)',
+  RESET:      'var(--os-t3)',
 }
 
 // ── sub-components ────────────────────────────────────────────────────────────
@@ -76,7 +76,7 @@ function RiskBar({ label, value, limit, redThreshold }: {
 
   return (
     <div style={{ marginBottom: 8 }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, color: 'var(--os-text-dim)', marginBottom: 3 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, color: 'var(--os-t3)', marginBottom: 3 }}>
         <span>{label}</span>
         <span style={{ color: isNeg ? 'var(--os-red)' : 'var(--os-green)' }}>
           {value >= 0 ? '+' : ''}₹{value.toFixed(0)} / ₹{limit}
@@ -94,11 +94,11 @@ function CountBar({ label, used, max }: { label: string; used: number; max: numb
   const warn = pct >= 80
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6, fontSize: 12 }}>
-      <span style={{ color: 'var(--os-text-dim)', minWidth: 140 }}>{label}</span>
+      <span style={{ color: 'var(--os-t3)', minWidth: 140 }}>{label}</span>
       <div style={{ flex: 1, background: 'var(--os-bg)', borderRadius: 3, height: 6 }}>
-        <div style={{ width: `${pct}%`, height: '100%', background: warn ? 'var(--os-red)' : 'var(--os-accent)', transition: 'width 0.3s' }} />
+        <div style={{ width: `${pct}%`, height: '100%', background: warn ? 'var(--os-red)' : 'var(--os-blue)', transition: 'width 0.3s' }} />
       </div>
-      <span style={{ color: warn ? 'var(--os-red)' : 'var(--os-text)', minWidth: 40, textAlign: 'right' }}>{used}/{max}</span>
+      <span style={{ color: warn ? 'var(--os-red)' : 'var(--os-t1)', minWidth: 40, textAlign: 'right' }}>{used}/{max}</span>
     </div>
   )
 }
@@ -140,18 +140,13 @@ export default function AutoTraderPanel() {
     }
 
     try {
-      const res = await fetch('/api/strategy/scan', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          symbols:    currentState.config.symbols,
-          strategies: currentState.config.strategies,
-          interval:   currentState.config.interval,
-        }),
-      })
+      const params = new URLSearchParams({ interval: currentState.config.interval })
+      const res = await fetch(`/api/strategy/scan?${params}`)
 
       if (!res.ok) throw new Error(`Scan failed: ${res.status}`)
-      const signals = await res.json()
+      const data = await res.json()
+      // Extract only rows that have signals
+      const signals = (data.rows ?? []).filter((r: { signals?: unknown[] }) => (r.signals?.length ?? 0) > 0)
 
       if (!signals?.length) {
         setState(prev =>
@@ -271,7 +266,7 @@ export default function AutoTraderPanel() {
 
   const panelStyle: React.CSSProperties = {
     display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16,
-    padding: 16, background: 'var(--os-bg)', color: 'var(--os-text)',
+    padding: 16, background: 'var(--os-bg)', color: 'var(--os-t1)',
     fontFamily: 'monospace', fontSize: 12, height: '100%',
   }
   const card: React.CSSProperties = {
@@ -280,11 +275,11 @@ export default function AutoTraderPanel() {
   }
   const sectionTitle: React.CSSProperties = {
     fontSize: 11, fontWeight: 700, textTransform: 'uppercase',
-    letterSpacing: 1, color: 'var(--os-text-dim)', marginBottom: 10, marginTop: 14,
+    letterSpacing: 1, color: 'var(--os-t3)', marginBottom: 10, marginTop: 14,
   }
   const inputStyle: React.CSSProperties = {
     background: 'var(--os-bg)', border: '1px solid var(--os-border)', borderRadius: 4,
-    color: 'var(--os-text)', padding: '4px 8px', fontSize: 12, width: '100%',
+    color: 'var(--os-t1)', padding: '4px 8px', fontSize: 12, width: '100%',
   }
   const row: React.CSSProperties = { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }
 
@@ -296,7 +291,7 @@ export default function AutoTraderPanel() {
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <span style={{ fontWeight: 700, fontSize: 13 }}>Auto-Trader Config</span>
           <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
-            <span style={{ color: cfg.enabled ? 'var(--os-green)' : 'var(--os-text-dim)' }}>
+            <span style={{ color: cfg.enabled ? 'var(--os-green)' : 'var(--os-t3)' }}>
               {cfg.enabled ? 'ENABLED' : 'DISABLED'}
             </span>
             <input type="checkbox" checked={cfg.enabled}
@@ -322,7 +317,7 @@ export default function AutoTraderPanel() {
           ['Account Size (₹)',      'accountSize',      10000,  99999999],
         ] as [string, keyof AutoTraderConfig, number, number][]).map(([label, key, min, max]) => (
           <div key={key} style={row}>
-            <label style={{ color: 'var(--os-text-dim)', minWidth: 160 }}>{label}</label>
+            <label style={{ color: 'var(--os-t3)', minWidth: 160 }}>{label}</label>
             <input type="number" style={{ ...inputStyle, maxWidth: 120 }}
               min={min} max={max} step={key === 'riskPerTrade' ? 0.5 : 1}
               value={cfg[key] as number}
@@ -335,7 +330,7 @@ export default function AutoTraderPanel() {
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
           {AVAILABLE_STRATEGIES.map(s => (
             <label key={s.id} style={{ display: 'flex', alignItems: 'center', gap: 4, cursor: 'pointer',
-              color: cfg.strategies.includes(s.id) ? 'var(--os-accent)' : 'var(--os-text-dim)' }}>
+              color: cfg.strategies.includes(s.id) ? 'var(--os-blue)' : 'var(--os-t3)' }}>
               <input type="checkbox" checked={cfg.strategies.includes(s.id)}
                 onChange={() => toggleStrategy(s.id)} />
               {s.label}
@@ -354,14 +349,14 @@ export default function AutoTraderPanel() {
 
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginTop: 10 }}>
           <div>
-            <div style={{ color: 'var(--os-text-dim)', marginBottom: 4, fontSize: 11 }}>Interval</div>
+            <div style={{ color: 'var(--os-t3)', marginBottom: 4, fontSize: 11 }}>Interval</div>
             <select style={inputStyle} value={cfg.interval}
               onChange={e => setCfg(c => ({ ...c, interval: e.target.value }))}>
               {['1m','5m','15m','30m','1h','4h','1d'].map(v => <option key={v} value={v}>{v}</option>)}
             </select>
           </div>
           <div>
-            <div style={{ color: 'var(--os-text-dim)', marginBottom: 4, fontSize: 11 }}>Broker</div>
+            <div style={{ color: 'var(--os-t3)', marginBottom: 4, fontSize: 11 }}>Broker</div>
             <select style={inputStyle} value={cfg.broker}
               onChange={e => setCfg(c => ({ ...c, broker: e.target.value as AutoTraderConfig['broker'] }))}>
               <option value="paper">Paper Trading</option>
@@ -376,7 +371,7 @@ export default function AutoTraderPanel() {
         <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
           <input type="checkbox" checked={cfg.autoApprove}
             onChange={e => setCfg(c => ({ ...c, autoApprove: e.target.checked }))} />
-          <span style={{ color: cfg.autoApprove ? 'var(--os-red)' : 'var(--os-text-dim)' }}>
+          <span style={{ color: cfg.autoApprove ? 'var(--os-red)' : 'var(--os-t3)' }}>
             {cfg.autoApprove ? 'ON' : 'OFF'}
           </span>
         </label>
@@ -388,7 +383,7 @@ export default function AutoTraderPanel() {
 
         <button onClick={saveConfig} style={{
           marginTop: 14, width: '100%', padding: '8px 0', borderRadius: 4,
-          background: 'var(--os-accent)', color: '#fff', border: 'none',
+          background: 'var(--os-blue)', color: '#fff', border: 'none',
           fontFamily: 'monospace', fontSize: 12, cursor: 'pointer',
         }}>
           Save Config
@@ -426,9 +421,9 @@ export default function AutoTraderPanel() {
 
           {/* drawdown bar */}
           <div style={{ marginBottom: 8 }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, color: 'var(--os-text-dim)', marginBottom: 3 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, color: 'var(--os-t3)', marginBottom: 3 }}>
               <span>Drawdown %</span>
-              <span style={{ color: state.drawdownPct >= 3 ? 'var(--os-red)' : 'var(--os-text)' }}>
+              <span style={{ color: state.drawdownPct >= 3 ? 'var(--os-red)' : 'var(--os-t1)' }}>
                 {state.drawdownPct.toFixed(2)}% / {state.config.maxDrawdownPct}%
               </span>
             </div>
@@ -436,7 +431,7 @@ export default function AutoTraderPanel() {
               <div style={{
                 width: `${Math.min(state.drawdownPct / state.config.maxDrawdownPct * 100, 100)}%`,
                 height: '100%',
-                background: state.drawdownPct >= 3 ? 'var(--os-red)' : 'var(--os-accent)',
+                background: state.drawdownPct >= 3 ? 'var(--os-red)' : 'var(--os-blue)',
                 transition: 'width 0.3s',
               }} />
             </div>
@@ -446,7 +441,7 @@ export default function AutoTraderPanel() {
           <CountBar label="Open Positions"  used={state.openPositions}  max={state.config.maxOpenPositions} />
 
           {state.lastScanAt && (
-            <div style={{ fontSize: 11, color: 'var(--os-text-dim)', marginTop: 4 }}>
+            <div style={{ fontSize: 11, color: 'var(--os-t3)', marginTop: 4 }}>
               Last scan: {new Date(state.lastScanAt).toLocaleTimeString()}
             </div>
           )}
@@ -471,15 +466,15 @@ export default function AutoTraderPanel() {
             padding: 8, maxHeight: 220,
           }}>
             {state.log.length === 0 && (
-              <div style={{ color: 'var(--os-text-dim)', fontSize: 11 }}>No activity yet.</div>
+              <div style={{ color: 'var(--os-t3)', fontSize: 11 }}>No activity yet.</div>
             )}
             {[...state.log].reverse().map((entry, i) => (
               <div key={i} style={{ display: 'flex', gap: 8, marginBottom: 4, fontSize: 11, lineHeight: 1.4 }}>
-                <span style={{ color: 'var(--os-text-dim)', whiteSpace: 'nowrap' }}>
+                <span style={{ color: 'var(--os-t3)', whiteSpace: 'nowrap' }}>
                   {new Date(entry.ts).toLocaleTimeString()}
                 </span>
                 <span style={{ color: LOG_COLOR[entry.type], fontWeight: 700, minWidth: 70 }}>[{entry.type}]</span>
-                <span style={{ color: 'var(--os-text)' }}>{entry.message}</span>
+                <span style={{ color: 'var(--os-t1)' }}>{entry.message}</span>
               </div>
             ))}
           </div>

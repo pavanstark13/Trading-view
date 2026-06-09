@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
-
 import { INDIA_MAP } from '@/lib/indianMarket'
+import { fetchYahooChart, parseYahooChart } from '@/lib/yahooFinance'
 
 const YAHOO_MAP: Record<string, string> = {
   BTCUSD: 'BTC-USD',
@@ -34,33 +34,8 @@ export async function GET(req: NextRequest) {
   const range = RANGE_MAP[interval] ?? '30d'
 
   try {
-    const url = `https://query1.finance.yahoo.com/v8/finance/chart/${yahooSymbol}?interval=${yInterval}&range=${range}`
-    const res = await fetch(url, {
-      headers: { 'User-Agent': 'Mozilla/5.0' },
-      next: { revalidate: 60 },
-    })
-
-    if (!res.ok) throw new Error(`Yahoo returned ${res.status}`)
-    const json = await res.json()
-
-    const result = json?.chart?.result?.[0]
-    if (!result) throw new Error('No data from Yahoo Finance')
-
-    const timestamps: number[] = result.timestamp ?? []
-    const ohlcv = result.indicators?.quote?.[0]
-    if (!ohlcv) throw new Error('No OHLCV data')
-
-    const candles = timestamps.map((t: number, i: number) => ({
-      time: t,
-      open:   ohlcv.open[i]   ?? null,
-      high:   ohlcv.high[i]   ?? null,
-      low:    ohlcv.low[i]    ?? null,
-      close:  ohlcv.close[i]  ?? null,
-      volume: ohlcv.volume[i] ?? 0,
-    })).filter((c: { open: number | null; high: number | null; low: number | null; close: number | null }) =>
-      c.open !== null && c.high !== null && c.low !== null && c.close !== null
-    )
-
+    const json = await fetchYahooChart(yahooSymbol, yInterval, range)
+    const candles = parseYahooChart(json)
     return NextResponse.json({ candles, symbol, interval })
   } catch (err) {
     const msg = err instanceof Error ? err.message : 'Unknown error'

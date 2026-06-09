@@ -9,6 +9,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { runAllStrategies } from '@/lib/strategies'
 import { ema, rsi, macd, atr, sma } from '@/lib/indicators'
+import { fetchYahooChart, parseYahooChart } from '@/lib/yahooFinance'
 import type { Candle } from '@/lib/indicators'
 
 // ── Symbol list ───────────────────────────────────────────────────────────────
@@ -72,25 +73,8 @@ async function scanSymbol(
   const range     = RANGE_MAP[interval] ?? '30d'
   const yInterval = IV_MAP[interval] ?? '1h'
 
-  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${yahoo}?interval=${yInterval}&range=${range}`
-  const res = await fetch(url, {
-    headers: { 'User-Agent': 'Mozilla/5.0' },
-    next: { revalidate: 180 },  // 3-min cache per symbol
-  })
-  if (!res.ok) throw new Error(`HTTP ${res.status}`)
-
-  const json   = await res.json()
-  const result = json?.chart?.result?.[0]
-  if (!result) throw new Error('No data')
-
-  const timestamps: number[] = result.timestamp ?? []
-  const ohlcv = result.indicators?.quote?.[0]
-  if (!ohlcv || !timestamps.length) throw new Error('Empty OHLCV')
-
-  const candles: Candle[] = timestamps.map((t: number, i: number) => ({
-    time: t, open: ohlcv.open[i], high: ohlcv.high[i],
-    low: ohlcv.low[i], close: ohlcv.close[i], volume: ohlcv.volume[i] ?? 0,
-  })).filter((c: Candle) => c.open != null && c.close != null && !isNaN(c.close))
+  const json    = await fetchYahooChart(yahoo, yInterval, range)
+  const candles: Candle[] = parseYahooChart(json)
 
   if (candles.length < 30) throw new Error('Insufficient candles')
 

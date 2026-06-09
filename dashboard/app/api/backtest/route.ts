@@ -9,6 +9,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { STRATEGY_MAP } from '@/lib/strategies'
 import { runBacktest } from '@/lib/backtest'
+import { fetchYahooChart, parseYahooChart } from '@/lib/yahooFinance'
 import type { Candle } from '@/lib/indicators'
 
 const YAHOO_MAP: Record<string, string> = {
@@ -47,29 +48,8 @@ export async function GET(req: NextRequest) {
   const yInterval   = IV_MAP[interval] ?? '1d'
 
   try {
-    const url = `https://query1.finance.yahoo.com/v8/finance/chart/${yahooSymbol}?interval=${yInterval}&range=${range}`
-    const res = await fetch(url, {
-      headers: { 'User-Agent': 'Mozilla/5.0' },
-      next: { revalidate: 3600 },  // backtest data: 1h cache (historical, changes slowly)
-    })
-    if (!res.ok) throw new Error(`Yahoo Finance returned ${res.status} for ${yahooSymbol}`)
-
-    const json   = await res.json()
-    const result = json?.chart?.result?.[0]
-    if (!result) throw new Error('No chart data returned from Yahoo Finance')
-
-    const timestamps: number[] = result.timestamp ?? []
-    const ohlcv = result.indicators?.quote?.[0]
-    if (!ohlcv) throw new Error('No OHLCV data in response')
-
-    const candles: Candle[] = timestamps.map((t: number, i: number) => ({
-      time: t, open: ohlcv.open[i], high: ohlcv.high[i],
-      low: ohlcv.low[i], close: ohlcv.close[i], volume: ohlcv.volume[i] ?? 0,
-    })).filter((c: Candle) =>
-      c.open != null && c.close != null &&
-      !isNaN(c.close) && !isNaN(c.open) &&
-      c.close > 0 && c.open > 0
-    )
+    const json     = await fetchYahooChart(yahooSymbol, yInterval, range)
+    const candles: Candle[] = parseYahooChart(json).filter(c => c.close > 0 && c.open > 0)
 
     if (candles.length < strategy.minCandles + 10) {
       return NextResponse.json({
