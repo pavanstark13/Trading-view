@@ -106,7 +106,7 @@ function SectionHeader({ icon, title, color, badge, open, onToggle }: {
 
 // ── Main component ────────────────────────────────────────────────────────────
 export default function BrokerSetupGuide() {
-  const [open, setOpen] = useState<Section | null>('forex')
+  const [open, setOpen] = useState<Section | null>('india')
 
   // OANDA state
   const [oaAccount, setOaAccount] = useState('')
@@ -122,8 +122,14 @@ export default function BrokerSetupGuide() {
   const [bnStatus,  setBnStatus]  = useState<ConnStatus>('idle')
   const [bnMsg,     setBnMsg]     = useState('')
 
-  // Angel One: check env via API call (no sensitive data sent)
-  const [aoConfigured, setAoConfigured] = useState<boolean | null>(null)
+  // Angel One state
+  const [aoClientId,   setAoClientId]   = useState('')
+  const [aoApiKey,     setAoApiKey]     = useState('')
+  const [aoPassword,   setAoPassword]   = useState('')
+  const [aoTotp,       setAoTotp]       = useState('')
+  const [aoStatus,     setAoStatus]     = useState<ConnStatus>('idle')
+  const [aoMsg,        setAoMsg]        = useState('')
+  const [aoConnected,  setAoConnected]  = useState(false)
 
   // Hydrate from localStorage
   useEffect(() => {
@@ -133,12 +139,8 @@ export default function BrokerSetupGuide() {
     setBnKey    (localStorage.getItem(LS.binanceKey)    ?? '')
     setBnSecret (localStorage.getItem(LS.binanceSecret) ?? '')
     setBnTestnet(localStorage.getItem(LS.binanceTestnet) !== 'false')
-
-    // Probe Angel One config
-    fetch('/api/angelone/account')
-      .then(r => r.json())
-      .then(d => setAoConfigured(!d.error || d.error?.includes('session') || d.error?.includes('token')))
-      .catch(() => setAoConfigured(false))
+    setAoClientId(localStorage.getItem('ao_client_id') ?? '')
+    setAoApiKey  (localStorage.getItem('ao_api_key')   ?? '')
   }, [])
 
   // Persist OANDA creds
@@ -153,6 +155,30 @@ export default function BrokerSetupGuide() {
     localStorage.setItem(LS.binanceKey,    bnKey)
     localStorage.setItem(LS.binanceSecret, bnSecret)
     localStorage.setItem(LS.binanceTestnet, String(bnTestnet))
+  }
+
+  // Connect Angel One
+  const connectAngelOne = async () => {
+    if (!aoClientId || !aoApiKey || !aoPassword || !aoTotp) return
+    localStorage.setItem('ao_client_id', aoClientId)
+    localStorage.setItem('ao_api_key',   aoApiKey)
+    setAoStatus('testing'); setAoMsg('')
+    try {
+      const res = await fetch('/api/angelone/auth', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ clientId: aoClientId, apiKey: aoApiKey, password: aoPassword, totpSecret: aoTotp }),
+      })
+      const d = await res.json()
+      if (!res.ok || d.error) throw new Error(d.error ?? 'Login failed')
+      setAoStatus('ok')
+      setAoConnected(true)
+      setAoMsg(`Connected! ${d.name ?? aoClientId} · ${d.email ?? ''} · ${d.broker ?? 'Angel One'}`)
+    } catch (e) {
+      setAoStatus('error')
+      setAoConnected(false)
+      setAoMsg(e instanceof Error ? e.message : 'Authentication failed')
+    }
   }
 
   // Test OANDA
@@ -222,32 +248,73 @@ export default function BrokerSetupGuide() {
         <SectionHeader icon="🇮🇳" title="Indian Stocks (NSE / BSE / F&O)" color={AMBER}
           badge="Integrated" open={open === 'india'} onToggle={() => toggle('india')} />
         {open === 'india' && (
-          <div style={{ padding: '12px 14px', background: BG,
+          <div style={{ padding: '14px 14px', background: BG,
             border: `1px solid ${BORDER}`, borderTop: 'none', borderRadius: '0 0 6px 6px' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10,
-              padding: '7px 10px', borderRadius: 4,
-              background: (aoConfigured ? GREEN : MUTED) + '12',
-              border: `1px solid ${(aoConfigured ? GREEN : MUTED)}33` }}>
-              <span style={{ width: 8, height: 8, borderRadius: '50%', flexShrink: 0,
-                background: aoConfigured ? GREEN : aoConfigured === null ? AMBER : MUTED,
-                boxShadow: aoConfigured ? `0 0 8px ${GREEN}` : 'none',
-                display: 'inline-block' }} />
-              <div>
-                <div style={{ fontSize: 10, fontWeight: 700,
-                  color: aoConfigured ? GREEN : aoConfigured === null ? AMBER : MUTED }}>
-                  Angel One Smart API
-                  {aoConfigured === null ? ' — checking…' : aoConfigured ? ' — Active' : ' — Not configured'}
+
+            {/* Angel One card */}
+            <div style={{ padding: '10px 12px', borderRadius: 5, marginBottom: 12,
+              background: CARD, border: `1px solid ${AMBER}33` }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 6 }}>
+                <div>
+                  <span style={{ fontSize: 11, fontWeight: 800, color: AMBER }}>Angel One</span>
+                  <span style={{ marginLeft: 6, fontSize: 7.5, padding: '1px 5px', borderRadius: 3,
+                    background: GREEN + '18', color: GREEN, border: `1px solid ${GREEN}44`, fontWeight: 700 }}>
+                    RECOMMENDED
+                  </span>
                 </div>
-                <div style={{ fontSize: 8, color: MUTED, marginTop: 1 }}>
-                  {aoConfigured
-                    ? 'Env vars detected. Use the Broker panel to authenticate.'
-                    : 'Set ANGEL_CLIENT_ID, ANGEL_API_KEY, ANGEL_PASSWORD, ANGEL_TOTP_SECRET in .env.local'}
-                </div>
+                <a href="https://www.angelone.in" target="_blank" rel="noreferrer"
+                  style={{ fontSize: 8.5, color: BLUE, textDecoration: 'none' }}>angelone.in ↗</a>
               </div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 6, marginBottom: 8 }}>
+                {[['Exchange','NSE · BSE · MCX'],['Segments','Equity · F&O · CDS'],['API','Smart API v2']].map(([k,v]) => (
+                  <div key={k} style={{ padding: '4px 6px', borderRadius: 3, background: BG, border: `1px solid ${BORDER}` }}>
+                    <div style={{ fontSize: 7.5, color: MUTED }}>{k}</div>
+                    <div style={{ fontSize: 8.5, color: '#d4e2f8', fontWeight: 700, marginTop: 1 }}>{v}</div>
+                  </div>
+                ))}
+              </div>
+              <div style={{ fontSize: 8.5, color: MUTED, lineHeight: 1.5, marginBottom: 8 }}>
+                SEBI-registered broker. REST API for live equities, F&amp;O, MCX and CDS.
+                Enable Smart API from your Angel One account settings.
+              </div>
+              <StepList steps={[
+                'Login to angelone.in → My Profile → Enable Smart API',
+                'Create an API app and copy the API Key',
+                'Enable TOTP 2FA in your Angel One security settings',
+                'Use the TOTP secret (scan the QR code manually to get the secret)',
+              ]} />
             </div>
-            <div style={{ fontSize: 8.5, color: MUTED, lineHeight: 1.6 }}>
-              Supports NSE equities, NFO futures & options, MCX commodities, and CDS currency derivatives.
-              Use the <strong style={{ color: BLUE }}>Broker Panel</strong> in the sidebar to authenticate and place orders.
+
+            {/* Angel One login form */}
+            <div style={{ borderTop: `1px solid ${BORDER}`, paddingTop: 12, marginBottom: 2 }}>
+              <div style={{ fontSize: 9, fontWeight: 700, color: '#d4e2f8', marginBottom: 10,
+                letterSpacing: '0.05em' }}>CONNECT ANGEL ONE ACCOUNT</div>
+              <Row label="Client ID">
+                <Input value={aoClientId} onChange={setAoClientId} placeholder="e.g. A123456" />
+              </Row>
+              <Row label="API Key">
+                <Input value={aoApiKey} onChange={setAoApiKey} placeholder="Paste API key from Smart API settings" type="password" />
+              </Row>
+              <Row label="Password">
+                <Input value={aoPassword} onChange={setAoPassword} placeholder="Angel One login password" type="password" />
+              </Row>
+              <Row label="TOTP Secret (for auto-generated OTP)">
+                <Input value={aoTotp} onChange={setAoTotp} placeholder="Base32 secret from TOTP QR code" type="password" />
+              </Row>
+              <button
+                onClick={connectAngelOne}
+                disabled={aoStatus === 'testing' || !aoClientId || !aoApiKey || !aoPassword || !aoTotp}
+                style={{
+                  width: '100%', padding: '7px 0', fontSize: 10, fontWeight: 800, borderRadius: 5,
+                  cursor: (aoStatus === 'testing' || !aoClientId || !aoApiKey || !aoPassword || !aoTotp) ? 'not-allowed' : 'pointer',
+                  background: aoConnected ? GREEN + '18' : AMBER + '18',
+                  border: `1px solid ${aoConnected ? GREEN : AMBER}44`,
+                  color: aoConnected ? GREEN : AMBER,
+                  fontFamily: 'inherit', letterSpacing: '0.06em', transition: 'all .15s',
+                }}>
+                {aoConnected ? '✓ Connected to Angel One' : 'Connect Angel One'}
+              </button>
+              <StatusChip status={aoStatus} msg={aoMsg} />
             </div>
           </div>
         )}
