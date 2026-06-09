@@ -36,9 +36,13 @@ export async function GET(req: NextRequest) {
   try {
     const json = await fetchYahooChart(yahooSymbol, yInterval, range)
     const candles = parseYahooChart(json)
+    if (!candles.length) {
+      return NextResponse.json({ candles: [], symbol, interval, warning: 'No candles returned for this symbol/interval' })
+    }
     return NextResponse.json({ candles, symbol, interval })
   } catch (err) {
     const msg = err instanceof Error ? err.message : 'Unknown error'
-    return NextResponse.json({ error: msg }, { status: 500 })
+    // Return 200 with empty candles so the chart renders gracefully
+    return NextResponse.json({ candles: [], symbol, interval, error: msg })
   }
 }

@@ -178,10 +178,14 @@ export default function TerminalView() {
     setError(null)
     try {
       const res  = await fetch(`/api/candles?symbol=${pair}&interval=${iv}`)
-      if (!res.ok) throw new Error(`HTTP ${res.status}`)
-      const { candles: data } = await res.json()
-      setCandles(data ?? [])
-      if ((data ?? []).length >= 50) {
+      const json = await res.json()
+      const data: Candle[] = json.candles ?? []
+      setCandles(data)
+      if (json.error) {
+        setError(`Data unavailable: ${json.error}`)
+      } else if (data.length === 0) {
+        setError(json.warning ?? 'No candle data returned')
+      } else if (data.length >= 50) {
         const a = analyseMarket(data, pair.includes('JPY') ? 0.01 : 0.0001)
         setAnalysis(a)
       }
