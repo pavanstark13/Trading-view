@@ -6,11 +6,11 @@ import { INDIA_MAP } from '@/lib/indianMarket'
 import type { AIAnalysis } from '@/lib/indicators'
 
 interface BrokerPanelProps {
-  pair:     string
-  analysis: AIAnalysis | null
-  pipSize:  number
-  account:  number
-  riskPct:  number
+  pair?:     string
+  analysis?: AIAnalysis | null
+  pipSize?:  number
+  account?:  number
+  riskPct?:  number
 }
 
 interface AccountData {
@@ -38,7 +38,7 @@ function instrType(pair: string): 'india' | 'forex' {
   return INDIA_MAP[pair] ? 'india' : 'forex'
 }
 
-export default function BrokerPanel({ pair, analysis, pipSize: _pipSize, account: _account, riskPct: _riskPct }: BrokerPanelProps) {
+export default function BrokerPanel({ pair = 'NIFTY', analysis = null, pipSize: _pipSize = 0.05, account: _account = 500000, riskPct: _riskPct = 1 }: BrokerPanelProps) {
   const [connected,  setConnected]  = useState(false)
   const [userName,   setUserName]   = useState('')
   const [tab,        setTab]        = useState<Tab>('account')
