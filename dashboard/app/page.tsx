@@ -4,7 +4,9 @@ import dynamic from 'next/dynamic'
 import AIPanel from '@/components/AIPanel'
 import StrengthMeter from '@/components/StrengthMeter'
 import StrategyFeed from '@/components/StrategyFeed'
+import IndicatorPanel from '@/components/IndicatorPanel'
 import { analyseMarket, type Candle, type AIAnalysis } from '@/lib/indicators'
+import { DEFAULT_INDICATORS, type IndicatorConfig } from '@/components/TradingChart'
 
 const TradingChart = dynamic(() => import('@/components/TradingChart'), { ssr: false })
 
@@ -86,8 +88,9 @@ export default function Dashboard() {
   const [price,     setPrice]     = useState<number|null>(null)
   const [account,   setAccount]   = useState(10000)
   const [riskPct,   setRiskPct]   = useState(1.0)
-  const [countdown, setCountdown] = useState(REFRESH_SEC)
-  const [lastAt,    setLastAt]    = useState('')
+  const [countdown,   setCountdown]   = useState(REFRESH_SEC)
+  const [lastAt,      setLastAt]      = useState('')
+  const [indicators,  setIndicators]  = useState<IndicatorConfig>(DEFAULT_INDICATORS)
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const refreshRef  = useRef<any>(null)
@@ -297,13 +300,18 @@ export default function Dashboard() {
           borderRadius:8, overflow:'hidden',
           background:'var(--bg)',
           border:`1px solid ${catCol}44`,
-          boxShadow:`0 0 30px ${catCol}0e, inset 0 0 0 0 transparent`,
+          boxShadow:`0 0 30px ${catCol}0e`,
           position:'relative',
         }}>
           {candles.length > 0
-            ? <TradingChart candles={candles} pair={`${pair}  ·  ${iv}`} pipSize={pipSize} />
+            ? <TradingChart candles={candles} pair={`${pair}  ·  ${iv}`} pipSize={pipSize} indicators={indicators} />
             : <ChartSkeleton loading={loading} error={error} pair={pair} />
           }
+          {/* Indicator toggle panel — floats over chart */}
+          <IndicatorPanel
+            indicators={indicators}
+            onChange={(key, val) => setIndicators(prev => ({ ...prev, [key]: val }))}
+          />
         </div>
 
         {/* ── Sidebar ── */}
