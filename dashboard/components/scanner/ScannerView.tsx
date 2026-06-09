@@ -1,11 +1,11 @@
 'use client'
 /**
  * Market Scanner — real data only.
- * Calls /api/strategy/scan which fetches from Yahoo Finance,
+ * Calls /api/strategy/scan which fetches from TwelveData/Yahoo Finance,
  * runs indicator calculations, and returns only mathematically confirmed signals.
  */
 
-import { useState, useMemo, useEffect, useCallback } from 'react'
+import { useState, useMemo, useEffect, useCallback, Fragment } from 'react'
 
 type ExchangeFilter = 'ALL' | 'NSE' | 'FOREX' | 'MCX' | 'CRYPTO'
 type SortKey = 'changePct' | 'rsi' | 'macdHist' | 'volumeRatio' | 'confidence'
@@ -137,6 +137,7 @@ export default function ScannerView() {
   const [interval,    setIntervalKey] = useState('1h')
   const [exchange,    setExchange]    = useState<ExchangeFilter>('ALL')
   const [signalOnly,  setSignalOnly]  = useState(false)
+  const [minConf,     setMinConf]     = useState(0)
   const [sortKey,     setSortKey]     = useState<SortKey>('confidence')
   const [sortDir,     setSortDir]     = useState<SortDir>('desc')
   const [selected,    setSelected]    = useState<string | null>(null)
@@ -169,7 +170,9 @@ export default function ScannerView() {
   }
 
   const filtered = useMemo(() => {
-    let d = signalOnly ? rows.filter(r => r.signals.length > 0) : rows
+    let d = rows
+    if (signalOnly) d = d.filter(r => r.signals.length > 0)
+    if (minConf > 0) d = d.filter(r => (r.topSignal?.confidence ?? 0) >= minConf)
     return [...d].sort((a, b) => {
       let av: number, bv: number
       switch (sortKey) {
@@ -203,11 +206,27 @@ export default function ScannerView() {
           <span style={{ fontSize:9, color:'var(--os-t3)' }}>Real data · Yahoo Finance</span>
           {scannedAt && <span style={{ fontSize:9, color:'var(--os-t3)', marginLeft:4 }}>Last scan: {scannedAt}</span>}
           {loading && <span className="os-badge os-badge-blue" style={{ fontSize:8 }}><span style={{ display:'inline-block', animation:'os-pulse 1s ease infinite' }}>⟳</span> Scanning…</span>}
-          <div style={{ marginLeft:'auto', display:'flex', gap:6, alignItems:'center' }}>
+          <div style={{ marginLeft:'auto', display:'flex', gap:8, alignItems:'center' }}>
             <label style={{ display:'flex', alignItems:'center', gap:5, fontSize:10, color:'var(--os-t2)', cursor:'pointer' }}>
               <input type="checkbox" checked={signalOnly} onChange={e => setSignalOnly(e.target.checked)} style={{ accentColor:'var(--os-blue)' }} />
               Signals only
             </label>
+            <div style={{ display:'flex', alignItems:'center', gap:4, fontSize:10, color:'var(--os-t2)' }}>
+              <span>Min confidence</span>
+              <select
+                value={minConf}
+                onChange={e => setMinConf(Number(e.target.value))}
+                style={{ background:'var(--os-surface2)', border:'1px solid var(--os-border2)', borderRadius:4,
+                  color: minConf >= 73 ? 'var(--os-green)' : 'var(--os-t2)', fontSize:10, padding:'2px 5px', cursor:'pointer' }}
+              >
+                <option value={0}>All</option>
+                <option value={50}>50%+</option>
+                <option value={60}>60%+</option>
+                <option value={73}>73%+ ✓</option>
+                <option value={80}>80%+</option>
+                <option value={90}>90%+</option>
+              </select>
+            </div>
             <button className="os-btn os-btn-primary" style={{ fontSize:10 }} onClick={scan} disabled={loading}>
               {loading ? '…' : '▶ Scan'}
             </button>
@@ -234,6 +253,7 @@ export default function ScannerView() {
             <span className="os-badge os-badge-green">{bullCount} ▲ LONG</span>
             <span className="os-badge os-badge-red">{bearCount} ▼ SHORT</span>
             <span className="os-badge os-badge-blue">{sigCount} signals</span>
+            {minConf > 0 && <span className="os-badge os-badge-green">{filtered.length} passing {minConf}%+</span>}
             <span style={{ color:'var(--os-t3)' }}>{rows.length} symbols</span>
           </div>
         </div>
@@ -283,9 +303,10 @@ export default function ScannerView() {
                 const isSelected = selected === row.symbol
                 const emaTrend = row.ema9 > row.ema21 && row.ema21 > row.ema50 ? 'BULL'
                                : row.ema9 < row.ema21 && row.ema21 < row.ema50 ? 'BEAR' : 'MIX'
+                const conf = row.topSignal?.confidence ?? 0
                 return (
-                  <>
-                    <tr key={row.symbol} style={{ cursor:'pointer', background: isSelected ? 'var(--os-active)' : undefined }}
+                  <Fragment key={row.symbol}>
+                    <tr style={{ cursor:'pointer', background: isSelected ? 'var(--os-active)' : undefined }}
                       onClick={() => setSelected(s => s === row.symbol ? null : row.symbol)}>
                       <td style={{ fontWeight:700, fontSize:11 }}>{row.symbol}</td>
                       <td><span className="os-badge" style={{ fontSize:8 }}>{row.exchange}</span></td>
@@ -311,16 +332,26 @@ export default function ScannerView() {
                           {emaTrend}
                         </span>
                       </td>
-                      <td><SignalPills signals={row.signals} /></td>
+                      <td>
+                        <div style={{ display:'flex', alignItems:'center', gap:6 }}>
+                          <SignalPills signals={row.signals} />
+                          {conf > 0 && (
+                            <span style={{ fontSize:9, fontWeight:700, marginLeft:2,
+                              color: conf >= 73 ? 'var(--os-green)' : conf >= 50 ? 'var(--os-amber)' : 'var(--os-red)' }}>
+                              {conf}%
+                            </span>
+                          )}
+                        </div>
+                      </td>
                     </tr>
                     {isSelected && (
-                      <tr key={`${row.symbol}-detail`}>
+                      <tr>
                         <td colSpan={8} style={{ padding:0 }}>
                           <ScanDetail row={row} />
                         </td>
                       </tr>
                     )}
-                  </>
+                  </Fragment>
                 )
               })}
             </tbody>
