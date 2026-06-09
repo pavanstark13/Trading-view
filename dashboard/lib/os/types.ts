@@ -9,6 +9,8 @@ export type OSView =
   | 'journal'
   | 'alerts'
   | 'broker'
+  | 'autotrader'
+  | 'broker-setup'
 
 export type Exchange = 'NSE' | 'BSE' | 'NFO' | 'MCX' | 'CDS' | 'FOREX' | 'CRYPTO'
 

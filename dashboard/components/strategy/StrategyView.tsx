@@ -1,9 +1,12 @@
 'use client'
 
 import { useState } from 'react'
+import dynamic from 'next/dynamic'
 import type { Strategy, BacktestResult } from '@/lib/os/types'
 
-type Tab = 'library' | 'builder' | 'backtest'
+const CustomStrategyBuilder = dynamic(() => import('@/components/strategy/CustomStrategyBuilder'), { ssr: false })
+
+type Tab = 'library' | 'builder' | 'backtest' | 'custom'
 
 const LIBRARY_STRATEGIES: Strategy[] = [
   { id: '1', name: 'EMA Crossover (20/50)',      description: 'Classic EMA cross strategy using 20 and 50 period EMAs for trend following on any timeframe.',   indicators: ['EMA20','EMA50'],                       timeframe: '15m', enabled: true,  winRate: 63, profitFactor: 1.8, createdAt: '', tags: ['trend','ema']     },
@@ -375,9 +378,9 @@ export default function StrategyView({ initialTab = 'library' }: { initialTab?: 
       <div style={{ flexShrink: 0, height: 44, display: 'flex', alignItems: 'center', gap: 0, padding: '0 14px', background: 'var(--os-surface)', borderBottom: '1px solid var(--os-border)' }}>
         <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--os-t1)', letterSpacing: '0.06em', marginRight: 16 }}>STRATEGY ENGINE</span>
         <div className="os-tabs">
-          {(['library','builder','backtest'] as Tab[]).map(t => (
+          {(['library','builder','custom','backtest'] as Tab[]).map(t => (
             <button key={t} className={`os-tab ${activeTab === t ? 'active' : ''}`} onClick={() => setActiveTab(t)}>
-              {t === 'library' ? 'Library' : t === 'builder' ? 'Builder' : 'Backtest Results'}
+              {t === 'library' ? 'Library' : t === 'builder' ? 'Builder' : t === 'custom' ? 'Custom ✦' : 'Backtest Results'}
               {t === 'backtest' && backtestResult && <span className="os-badge os-badge-green" style={{ fontSize: 8, marginLeft: 5 }}>DONE</span>}
               {t === 'backtest' && backtestRunning && <span className="os-badge os-badge-amber" style={{ fontSize: 8, marginLeft: 5 }}>RUNNING</span>}
             </button>
@@ -410,6 +413,7 @@ export default function StrategyView({ initialTab = 'library' }: { initialTab?: 
         if (selectedStrategy) handleRunBacktest(selectedStrategy)
         else handleRunBacktest(LIBRARY_STRATEGIES[0])
       }} />}
+      {activeTab === 'custom'   && <CustomStrategyBuilder />}
       {activeTab === 'backtest' && <BacktestTab result={backtestResult} running={backtestRunning} />}
     </div>
   )

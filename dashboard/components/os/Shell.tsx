@@ -13,8 +13,10 @@ const RiskView      = dynamic(() => import('@/components/risk/RiskView'),       
 const JournalView   = dynamic(() => import('@/components/journal/JournalView'),    { ssr: false, loading: () => <ViewLoader /> })
 const AlertsView    = dynamic(() => import('@/components/alerts/AlertsView'),      { ssr: false, loading: () => <ViewLoader /> })
 const BrokerPanel   = dynamic(() => import('@/components/BrokerPanel'),            { ssr: false, loading: () => <ViewLoader /> })
-const SignalQueue   = dynamic(() => import('@/components/signals/SignalQueue'),    { ssr: false, loading: () => <ViewLoader /> })
-const AICopilot     = dynamic(() => import('@/components/ai/AICopilot'),           { ssr: false })
+const SignalQueue        = dynamic(() => import('@/components/signals/SignalQueue'),              { ssr: false, loading: () => <ViewLoader /> })
+const AutoTraderPanel    = dynamic(() => import('@/components/autotrader/AutoTraderPanel'),       { ssr: false, loading: () => <ViewLoader /> })
+const BrokerSetupGuide   = dynamic(() => import('@/components/broker/BrokerSetupGuide'),         { ssr: false, loading: () => <ViewLoader /> })
+const AICopilot          = dynamic(() => import('@/components/ai/AICopilot'),                    { ssr: false })
 
 function ViewLoader() {
   return (
@@ -183,6 +185,14 @@ const NAV_ITEMS: { view: OSView; label: string; icon: React.ReactNode }[] = [
     view: 'broker', label: 'Broker',
     icon: <svg width="18" height="18" viewBox="0 0 18 18" fill="none"><circle cx="5" cy="9" r="2.5" stroke="currentColor" strokeWidth="1.3" /><circle cx="13" cy="5" r="2" stroke="currentColor" strokeWidth="1.3" /><circle cx="13" cy="13" r="2" stroke="currentColor" strokeWidth="1.3" /><path d="M7.5 8l3.5-2M7.5 10l3.5 2" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" /></svg>,
   },
+  {
+    view: 'autotrader' as OSView, label: 'Auto Trade',
+    icon: <svg width="18" height="18" viewBox="0 0 18 18" fill="none"><circle cx="9" cy="9" r="3" stroke="currentColor" strokeWidth="1.3"/><path d="M9 2v2M9 14v2M2 9h2M14 9h2" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round"/><path d="M4.22 4.22l1.41 1.41M12.37 12.37l1.41 1.41M12.37 5.63l1.41-1.41M4.22 13.78l1.41-1.41" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round"/><circle cx="9" cy="9" r="1.5" fill="currentColor"/></svg>,
+  },
+  {
+    view: 'broker-setup' as OSView, label: 'Connect',
+    icon: <svg width="18" height="18" viewBox="0 0 18 18" fill="none"><path d="M3 9h12" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round"/><path d="M10 5l4 4-4 4" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round"/><circle cx="4" cy="9" r="2" stroke="currentColor" strokeWidth="1.3"/></svg>,
+  },
 ]
 
 // ── Sidebar ───────────────────────────────────────────────────────────────────
@@ -294,9 +304,11 @@ function ActiveView({ view }: { view: OSView }) {
     case 'portfolio': return <PortfolioView />
     case 'risk':      return <RiskView />
     case 'journal':   return <JournalView />
-    case 'alerts':    return <AlertsView />
-    case 'broker':    return <BrokerPanel />
-    default:          return <TerminalView />
+    case 'alerts':       return <AlertsView />
+    case 'broker':       return <BrokerPanel />
+    case 'autotrader':   return <AutoTraderPanel />
+    case 'broker-setup': return <BrokerSetupGuide />
+    default:             return <TerminalView />
   }
 }
 
