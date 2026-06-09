@@ -32,9 +32,7 @@ interface BinanceAsset { asset: string; free: number; locked: number }
 function Row({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div style={{ marginBottom: 10 }}>
-      <div style={{ fontSize: 8.5, color: MUTED, marginBottom: 3, letterSpacing: '0.05em', textTransform: 'uppercase' }}>
-        {label}
-      </div>
+      <div style={{ fontSize: 8.5, color: MUTED, marginBottom: 3, letterSpacing: '0.05em', textTransform: 'uppercase' }}>{label}</div>
       {children}
     </div>
   )
@@ -44,15 +42,9 @@ function Input({ value, onChange, placeholder, type = 'text' }: {
   value: string; onChange: (v: string) => void; placeholder: string; type?: string
 }) {
   return (
-    <input
-      type={type} value={value} onChange={e => onChange(e.target.value)}
-      placeholder={placeholder}
-      style={{
-        width: '100%', padding: '6px 9px', fontSize: 10, borderRadius: 4,
-        background: BG, border: `1px solid ${BORDER}`, color: '#d4e2f8',
-        outline: 'none', fontFamily: 'inherit', boxSizing: 'border-box',
-      }}
-    />
+    <input type={type} value={value} onChange={e => onChange(e.target.value)} placeholder={placeholder}
+      style={{ width: '100%', padding: '6px 9px', fontSize: 10, borderRadius: 4, background: BG,
+        border: `1px solid ${BORDER}`, color: '#d4e2f8', outline: 'none', fontFamily: 'inherit', boxSizing: 'border-box' }} />
   )
 }
 
@@ -61,15 +53,13 @@ function Toggle({ active, onChange, labelOn, labelOff }: {
 }) {
   return (
     <div style={{ display: 'flex', gap: 4 }}>
-      {[true, false].map(v => (
+      {([true, false] as const).map(v => (
         <button key={String(v)} onClick={() => onChange(v)} style={{
           flex: 1, padding: '4px 0', fontSize: 9, fontWeight: 700, borderRadius: 4, cursor: 'pointer',
           background: active === v ? '#1b2a45' : 'transparent',
           border: `1px solid ${active === v ? BLUE + '88' : BORDER}`,
           color: active === v ? BLUE : MUTED, fontFamily: 'inherit',
-        }}>
-          {v ? labelOn : labelOff}
-        </button>
+        }}>{v ? labelOn : labelOff}</button>
       ))}
     </div>
   )
@@ -77,10 +67,7 @@ function Toggle({ active, onChange, labelOn, labelOff }: {
 
 function StatusChip({ status, msg }: { status: ConnStatus; msg: string }) {
   if (status === 'idle') return null
-  const [bg, col] =
-    status === 'testing' ? [AMBER + '12', AMBER] :
-    status === 'ok'      ? [GREEN  + '12', GREEN] :
-                           [RED    + '12', RED]
+  const [bg, col] = status === 'testing' ? [AMBER+'12', AMBER] : status === 'ok' ? [GREEN+'12', GREEN] : [RED+'12', RED]
   return (
     <div style={{ marginTop: 8, padding: '6px 9px', borderRadius: 4,
       background: bg, border: `1px solid ${col}33`, fontSize: 9, color: col, lineHeight: 1.5 }}>
@@ -92,9 +79,7 @@ function StatusChip({ status, msg }: { status: ConnStatus; msg: string }) {
 function StepList({ steps }: { steps: string[] }) {
   return (
     <ol style={{ margin: '6px 0 0', paddingLeft: 16 }}>
-      {steps.map((s, i) => (
-        <li key={i} style={{ fontSize: 8.5, color: MUTED, lineHeight: 1.6, marginBottom: 2 }}>{s}</li>
-      ))}
+      {steps.map((s, i) => <li key={i} style={{ fontSize: 8.5, color: MUTED, lineHeight: 1.6, marginBottom: 2 }}>{s}</li>)}
     </ol>
   )
 }
@@ -111,12 +96,8 @@ function SectionHeader({ icon, title, color, badge, open, onToggle }: {
       <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
         <span style={{ fontSize: 14 }}>{icon}</span>
         <span style={{ fontSize: 11, fontWeight: 800, color: '#d4e2f8' }}>{title}</span>
-        {badge && (
-          <span style={{ fontSize: 7.5, padding: '1px 6px', borderRadius: 10,
-            background: color + '18', color, border: `1px solid ${color}44`, fontWeight: 700 }}>
-            {badge}
-          </span>
-        )}
+        {badge && <span style={{ fontSize: 7.5, padding: '1px 6px', borderRadius: 10,
+          background: color+'18', color, border: `1px solid ${color}44`, fontWeight: 700 }}>{badge}</span>}
       </div>
       <span style={{ fontSize: 10, color: MUTED }}>{open ? '▲' : '▼'}</span>
     </button>
@@ -295,11 +276,7 @@ export default function BrokerSetupGuide() {
                   style={{ fontSize: 8.5, color: BLUE, textDecoration: 'none' }}>oanda.com ↗</a>
               </div>
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 6, marginBottom: 8 }}>
-                {[
-                  ['Regulated', 'FCA · NFA · ASIC'],
-                  ['Pairs', '70+ currency pairs'],
-                  ['Spreads', 'From 0.0 pips'],
-                ].map(([k, v]) => (
+                {[['Regulated','FCA · NFA · ASIC'],['Pairs','70+ currency pairs'],['Spreads','From 0.0 pips']].map(([k,v]) => (
                   <div key={k} style={{ padding: '4px 6px', borderRadius: 3, background: BG, border: `1px solid ${BORDER}` }}>
                     <div style={{ fontSize: 7.5, color: MUTED }}>{k}</div>
                     <div style={{ fontSize: 8.5, color: '#d4e2f8', fontWeight: 700, marginTop: 1 }}>{v}</div>
@@ -381,11 +358,7 @@ export default function BrokerSetupGuide() {
                   style={{ fontSize: 8.5, color: BLUE, textDecoration: 'none' }}>binance.com ↗</a>
               </div>
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 6, marginBottom: 8 }}>
-                {[
-                  ['Pairs', '600+ pairs'],
-                  ['Fees', '0.1% spot'],
-                  ['APIs', 'REST + WS'],
-                ].map(([k, v]) => (
+                {[['Pairs','600+ pairs'],['Fees','0.1% spot'],['APIs','REST + WS']].map(([k,v]) => (
                   <div key={k} style={{ padding: '4px 6px', borderRadius: 3, background: BG, border: `1px solid ${BORDER}` }}>
                     <div style={{ fontSize: 7.5, color: MUTED }}>{k}</div>
                     <div style={{ fontSize: 8.5, color: '#d4e2f8', fontWeight: 700, marginTop: 1 }}>{v}</div>
