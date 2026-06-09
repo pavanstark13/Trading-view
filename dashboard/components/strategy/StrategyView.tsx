@@ -28,17 +28,6 @@ function pfColor(pf: number): string {
   return 'var(--os-red)'
 }
 
-// ── Mock equity curve ─────────────────────────────────────────────────────────
-function mockEquity(totalTrades: number, winRate: number): { date: string; value: number }[] {
-  const pts: { date: string; value: number }[] = []
-  let v = 100000
-  for (let i = 0; i < totalTrades; i++) {
-    const win = Math.random() < winRate / 100
-    v += win ? Math.random() * 3000 + 500 : -(Math.random() * 2000 + 300)
-    pts.push({ date: `2024-${String(Math.floor(i / (totalTrades / 12)) + 1).padStart(2, '0')}-01`, value: Math.max(v, 60000) })
-  }
-  return pts
-}
 
 function EquityCurve({ equity }: { equity: { date: string; value: number }[] }) {
   if (!equity.length) return null
@@ -308,48 +297,6 @@ function BacktestTab({ result, running }: { result: BacktestResult | null; runni
 }
 
 // ── Symbols for mock backtest ─────────────────────────────────────────────────
-const BT_SYMBOLS = ['NIFTY','BANKNIFTY','RELIANCE','HDFCBANK','INFY','TCS','AXISBANK']
-
-function generateBacktestResult(s: Strategy): BacktestResult {
-  const wr  = s.winRate  ?? 60
-  const pf  = s.profitFactor ?? 1.8
-  const n   = 80 + Math.floor(Math.random() * 60)
-  const wins = Math.floor(n * wr / 100)
-  const avgW = 2800 + Math.floor(Math.random() * 1200)
-  const avgL = Math.floor(avgW / pf)
-  const netPnL = wins * avgW - (n - wins) * avgL
-  const eq  = mockEquity(n, wr)
-
-  return {
-    strategyId: s.id,
-    totalTrades: n,
-    winRate: wr + (Math.random() - 0.5) * 4,
-    profitFactor: pf + (Math.random() - 0.5) * 0.2,
-    netPnL,
-    netPnLPct: (netPnL / 100000) * 100,
-    maxDrawdown: 8 + Math.random() * 10,
-    sharpeRatio: 1.2 + Math.random() * 0.8,
-    avgWin: avgW,
-    avgLoss: avgL,
-    avgRR: pf * 0.9,
-    bestTrade: avgW * 3,
-    worstTrade: -(avgL * 2.5),
-    expectancy: (wr / 100 * avgW) - ((1 - wr / 100) * avgL),
-    period: 'Jan 2024 – Jun 2025',
-    equity: eq,
-    trades: Array.from({ length: 10 }, (_, i) => {
-      const win = Math.random() < wr / 100
-      const pnl = win ? avgW + Math.floor(Math.random() * 1000) : -(avgL + Math.floor(Math.random() * 500))
-      return {
-        date: `2025-${String(Math.floor(Math.random() * 6) + 1).padStart(2, '0')}-${String(Math.floor(Math.random() * 28) + 1).padStart(2, '0')}`,
-        symbol: BT_SYMBOLS[i % BT_SYMBOLS.length],
-        direction: Math.random() > 0.4 ? 'LONG' : 'SHORT',
-        pnl,
-        pnlPct: pnl / 100000 * 100,
-      }
-    }),
-  }
-}
 
 // ── Main ──────────────────────────────────────────────────────────────────────
 export default function StrategyView({ initialTab = 'library' }: { initialTab?: Tab }) {
@@ -358,15 +305,66 @@ export default function StrategyView({ initialTab = 'library' }: { initialTab?: 
   const [backtestRunning,  setBacktestRunning]  = useState(false)
   const [backtestResult,   setBacktestResult]   = useState<BacktestResult | null>(null)
 
-  const handleRunBacktest = (s: Strategy) => {
+  const [backtestSymbol,   setBacktestSymbol]   = useState('NIFTY')
+  const [backtestInterval, setBacktestInterval] = useState('1d')
+  const [backtestError,    setBacktestError]    = useState<string | null>(null)
+
+  const handleRunBacktest = async (s: Strategy) => {
     setSelectedStrategy(s)
     setActiveTab('backtest')
     setBacktestRunning(true)
     setBacktestResult(null)
-    setTimeout(() => {
-      setBacktestResult(generateBacktestResult(s))
+    setBacktestError(null)
+
+    // Strategy id mapping: library name → real strategy id
+    const stratIdMap: Record<string, string> = {
+      'EMA Crossover (20/50)': 'ema_cross',
+      'RSI Divergence':         'rsi_reversal',
+      'ICT Order Block':        'ema_cross',
+      'SMC CHoCH + FVG':        'macd_cross',
+      'MACD + Volume':          'macd_cross',
+      'Supertrend Trend Following': 'supertrend',
+      'London Session Breakout': 'bb_squeeze',
+      'VWAP Reversion':         'rsi_reversal',
+    }
+    const stratId = stratIdMap[s.name] ?? 'ema_cross'
+
+    try {
+      const res = await fetch(`/api/backtest?symbol=${backtestSymbol}&strategy=${stratId}&interval=${backtestInterval}`)
+      const data = await res.json()
+      if (!res.ok || data.error) throw new Error(data.error ?? `HTTP ${res.status}`)
+
+      // Map real backtest result to BacktestResult shape used by BacktestTab
+      setBacktestResult({
+        strategyId: stratId,
+        totalTrades: data.totalTrades,
+        winRate: data.winRate,
+        profitFactor: data.profitFactor,
+        netPnL: data.totalR * 2000,
+        netPnLPct: data.totalR * 2,
+        maxDrawdown: data.maxDrawdownPct,
+        sharpeRatio: data.sharpeRatio,
+        avgWin: data.avgWinR * 2000,
+        avgLoss: data.avgLossR * 2000,
+        avgRR: data.avgWinR / Math.max(data.avgLossR, 0.01),
+        bestTrade: Math.max(...(data.trades ?? []).map((t: {pnlR: number}) => t.pnlR * 2000), 0),
+        worstTrade: Math.min(...(data.trades ?? []).map((t: {pnlR: number}) => t.pnlR * 2000), 0),
+        expectancy: data.expectancy * 2000,
+        period: `${data.fromDate} → ${data.toDate}`,
+        equity: (data.equityCurve ?? []).map((e: {date: string; equity: number}) => ({ date: e.date, value: e.equity })),
+        trades: (data.trades ?? []).slice(-20).map((t: {entryDate: string; exitDate: string; direction: string; entryPrice: number; exitPrice: number; pnlR: number; pnlPct: number}) => ({
+          date: t.entryDate,
+          symbol: backtestSymbol,
+          direction: t.direction,
+          pnl: parseFloat((t.pnlR * 2000).toFixed(0)),
+          pnlPct: t.pnlPct,
+        })),
+      })
+    } catch (err) {
+      setBacktestError(err instanceof Error ? err.message : 'Backtest failed')
+    } finally {
       setBacktestRunning(false)
-    }, 1600 + Math.random() * 800)
+    }
   }
 
   const handleEdit = (s: Strategy) => { setSelectedStrategy(s); setActiveTab('builder') }
@@ -390,7 +388,22 @@ export default function StrategyView({ initialTab = 'library' }: { initialTab?: 
             Active: <span style={{ color: 'var(--os-blue)' }}>{selectedStrategy.name}</span>
           </span>
         )}
+        <div style={{ marginLeft:'auto', display:'flex', gap:6, alignItems:'center' }}>
+          <span style={{ fontSize:9.5, color:'var(--os-t3)' }}>Symbol:</span>
+          <input className="os-input" value={backtestSymbol} onChange={e => setBacktestSymbol(e.target.value.toUpperCase())}
+            style={{ width:80, fontSize:10, padding:'2px 6px', height:24 }} placeholder="NIFTY" />
+          {(['1d','1h','15m'] as const).map(iv => (
+            <button key={iv} onClick={() => setBacktestInterval(iv)}
+              className={`os-btn ${backtestInterval===iv?'os-btn-primary':''}`}
+              style={{ fontSize:9, padding:'2px 7px', height:24 }}>{iv}</button>
+          ))}
+        </div>
       </div>
+      {backtestError && (
+        <div style={{ padding:'6px 14px', background:'var(--os-red-glow)', borderBottom:'1px solid var(--os-border)', fontSize:10, color:'var(--os-red)', flexShrink:0 }}>
+          ✕ Backtest error: {backtestError}. Check symbol or try a different interval.
+        </div>
+      )}
 
       {activeTab === 'library' && <LibraryTab onRunBacktest={handleRunBacktest} onEdit={handleEdit} />}
       {activeTab === 'builder' && <BuilderTab initial={selectedStrategy} onQuickBacktest={() => {

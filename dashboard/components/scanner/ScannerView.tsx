@@ -1,233 +1,322 @@
 'use client'
+/**
+ * Market Scanner — real data only.
+ * Calls /api/strategy/scan which fetches from Yahoo Finance,
+ * runs indicator calculations, and returns only mathematically confirmed signals.
+ */
 
-import { useState, useMemo } from 'react'
-import type { ScanResult } from '@/lib/os/types'
-import { SCAN_DATA } from '@/lib/os/mockData'
+import { useState, useMemo, useEffect, useCallback } from 'react'
 
-type ExchangeFilter = 'ALL' | 'NSE' | 'BSE' | 'MCX' | 'NFO' | 'FOREX'
-type SignalFilter   = 'ALL' | 'BULLISH' | 'BEARISH' | 'NEUTRAL'
-type StrengthFilter = 'ANY' | 'STRONG' | 'VERY_STRONG'
-type SortKey        = 'changePct' | 'volume' | 'rsi' | 'strength' | 'signal'
+type ExchangeFilter = 'ALL' | 'NSE' | 'FOREX' | 'MCX' | 'CRYPTO'
+type SortKey = 'changePct' | 'rsi' | 'macdHist' | 'volumeRatio' | 'confidence'
+type SortDir = 'asc' | 'desc'
 
-const SIGNAL_ORDER: Record<string, number> = { STRONG_BUY: 5, BUY: 4, NEUTRAL: 3, SELL: 2, STRONG_SELL: 1 }
+interface ScanRow {
+  symbol:     string
+  exchange:   string
+  sector:     string
+  price:      number
+  change:     number
+  changePct:  number
+  volume:     number
+  volumeRatio: number
+  rsi:        number
+  ema9:       number
+  ema21:      number
+  ema50:      number
+  macdHist:   number
+  atrValue:   number
+  signals:    { strategyId: string; strategyName: string; direction: 'LONG' | 'SHORT'; confidence: number }[]
+  topSignal:  { direction: 'LONG' | 'SHORT'; strategyName: string; confidence: number } | null
+  error?:     string
+}
 
-function rsiColor(rsi: number): string {
-  if (rsi < 30) return 'var(--os-green)'
-  if (rsi < 45) return 'var(--os-cyan)'
-  if (rsi < 55) return 'var(--os-t2)'
-  if (rsi < 70) return 'var(--os-amber)'
+const INTERVALS = ['15m','1h','4h','1d']
+
+function rsiColor(v: number) {
+  if (v <= 30) return 'var(--os-green)'
+  if (v <= 45) return 'var(--os-cyan)'
+  if (v <= 55) return 'var(--os-t2)'
+  if (v <= 70) return 'var(--os-amber)'
   return 'var(--os-red)'
 }
 
-function macdLabel(m: ScanResult['macd']): { text: string; cls: string } {
-  switch (m) {
-    case 'BULL_CROSS': return { text: 'BULL X',  cls: 'os-badge-green' }
-    case 'BEAR_CROSS': return { text: 'BEAR X',  cls: 'os-badge-red'   }
-    case 'BULL':       return { text: 'BULL',    cls: 'os-badge-cyan'  }
-    case 'BEAR':       return { text: 'BEAR',    cls: 'os-badge-red'   }
-    default:           return { text: 'NEUTRAL', cls: ''               }
-  }
+function macdColor(h: number) {
+  if (h > 0) return 'var(--os-green)'
+  if (h < 0) return 'var(--os-red)'
+  return 'var(--os-t3)'
 }
 
-function signalLabel(s: ScanResult['signal']): { text: string; cls: string } {
-  switch (s) {
-    case 'STRONG_BUY':  return { text: 'STRONG BUY',  cls: 'os-badge-green'  }
-    case 'BUY':         return { text: 'BUY',          cls: 'os-badge-cyan'   }
-    case 'NEUTRAL':     return { text: 'NEUTRAL',      cls: ''                }
-    case 'SELL':        return { text: 'SELL',         cls: 'os-badge-red'    }
-    case 'STRONG_SELL': return { text: 'STRONG SELL',  cls: 'os-badge-red'    }
-  }
-}
-
-function fmtVol(v: number): string {
-  if (v >= 1e7) return (v / 1e7).toFixed(1) + 'Cr'
-  if (v >= 1e5) return (v / 1e5).toFixed(1) + 'L'
-  return v.toLocaleString('en-IN')
-}
-
-const SECTORS = ['ALL','BANKING','IT','OIL&GAS','AUTO','PHARMA','INFRA','FMCG','METALS','REALTY']
-
-export default function ScannerView() {
-  const [exchange, setExchange] = useState<ExchangeFilter>('ALL')
-  const [signal,   setSignal]   = useState<SignalFilter>('ALL')
-  const [strength, setStrength] = useState<StrengthFilter>('ANY')
-  const [sector,   setSector]   = useState('ALL')
-  const [highVol,  setHighVol]  = useState(false)
-  const [sortKey,  setSortKey]  = useState<SortKey>('strength')
-  const [sortDesc, setSortDesc] = useState(true)
-  const [loading,  setLoading]  = useState(false)
-  const [expanded, setExpanded] = useState<string | null>(null)
-
-  const filtered = useMemo(() => {
-    let d = [...SCAN_DATA]
-    if (exchange !== 'ALL') d = d.filter(r => r.exchange === exchange)
-    if (sector   !== 'ALL') d = d.filter(r => r.sector === sector)
-    if (signal === 'BULLISH') d = d.filter(r => r.signal === 'BUY' || r.signal === 'STRONG_BUY')
-    if (signal === 'BEARISH') d = d.filter(r => r.signal === 'SELL' || r.signal === 'STRONG_SELL')
-    if (signal === 'NEUTRAL') d = d.filter(r => r.signal === 'NEUTRAL')
-    if (strength === 'STRONG')      d = d.filter(r => r.strength >= 70)
-    if (strength === 'VERY_STRONG') d = d.filter(r => r.strength >= 85)
-    if (highVol) d = d.filter(r => r.volumeRatio >= 1.5)
-    d.sort((a, b) => {
-      let va = 0, vb = 0
-      if (sortKey === 'changePct') { va = a.changePct; vb = b.changePct }
-      if (sortKey === 'volume')    { va = a.volume;    vb = b.volume    }
-      if (sortKey === 'rsi')       { va = a.rsi;       vb = b.rsi      }
-      if (sortKey === 'strength')  { va = a.strength;  vb = b.strength  }
-      if (sortKey === 'signal')    { va = SIGNAL_ORDER[a.signal] ?? 0; vb = SIGNAL_ORDER[b.signal] ?? 0 }
-      return sortDesc ? vb - va : va - vb
-    })
-    return d
-  }, [exchange, signal, strength, sector, highVol, sortKey, sortDesc])
-
-  const bullCount   = filtered.filter(r => r.signal === 'BUY'  || r.signal === 'STRONG_BUY').length
-  const bearCount   = filtered.filter(r => r.signal === 'SELL' || r.signal === 'STRONG_SELL').length
-  const neutCount   = filtered.filter(r => r.signal === 'NEUTRAL').length
-  const nearHighCnt = filtered.filter(r => r.nearHigh).length
-  const nearLowCnt  = filtered.filter(r => r.nearLow).length
-  const volLeaders  = filtered.filter(r => r.volumeRatio > 1.5).length
-
-  const handleRefresh = () => { setLoading(true); setTimeout(() => setLoading(false), 800) }
-  const toggleSort = (k: SortKey) => { if (sortKey === k) setSortDesc(d => !d); else { setSortKey(k); setSortDesc(true) } }
-
+function VolBar({ ratio }: { ratio: number }) {
+  const pct = Math.min(ratio * 50, 100)
+  const col = ratio >= 1.5 ? 'var(--os-amber)' : ratio >= 1 ? 'var(--os-blue)' : 'var(--os-t3)'
   return (
-    <div style={{ width: '100%', height: '100%', display: 'flex', flexDirection: 'column', background: 'var(--os-bg)', overflow: 'hidden' }}>
-      {/* Header */}
-      <div style={{ flexShrink: 0, padding: '0 12px', borderBottom: '1px solid var(--os-border)', background: 'var(--os-surface)' }}>
-        <div style={{ height: 48, display: 'flex', alignItems: 'center', gap: 12 }}>
-          <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--os-t1)', letterSpacing: '0.06em' }}>MARKET SCANNER</span>
-          <span className="os-badge os-badge-blue" style={{ fontSize: 10 }}>{filtered.length} results</span>
-          <div style={{ flex: 1 }} />
-          <button className="os-btn" style={{ fontSize: 10 }} onClick={handleRefresh} disabled={loading}>
-            {loading ? '↻ Refreshing…' : '↻ Refresh'}
-          </button>
-          <button className="os-btn" style={{ fontSize: 10 }}>⬇ Export CSV</button>
-        </div>
-        {/* Filters */}
-        <div style={{ paddingBottom: 8, display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
-          <div style={{ display: 'flex', gap: 3 }}>
-            {(['ALL','NSE','BSE','MCX','NFO','FOREX'] as ExchangeFilter[]).map(ex => (
-              <button key={ex} onClick={() => setExchange(ex)} className={exchange === ex ? 'os-btn os-btn-primary' : 'os-btn'} style={{ fontSize: 9, padding: '2px 7px' }}>{ex}</button>
-            ))}
+    <div style={{ display:'flex', alignItems:'center', gap:4 }}>
+      <div style={{ width:40, height:4, background:'var(--os-surface3)', borderRadius:2 }}>
+        <div style={{ width:`${pct}%`, height:'100%', background:col, borderRadius:2 }} />
+      </div>
+      <span style={{ fontSize:9, fontFamily:'var(--font-mono)', color:col }}>{ratio.toFixed(1)}x</span>
+    </div>
+  )
+}
+
+function SignalPills({ signals }: { signals: ScanRow['signals'] }) {
+  if (!signals.length) return <span style={{ fontSize:9, color:'var(--os-t3)' }}>—</span>
+  return (
+    <div style={{ display:'flex', gap:3, flexWrap:'wrap' }}>
+      {signals.map(s => (
+        <span key={s.strategyId} style={{
+          fontSize:8, padding:'1px 5px', borderRadius:3, fontWeight:700,
+          background: s.direction==='LONG' ? 'var(--os-green-glow)' : 'var(--os-red-glow)',
+          color:      s.direction==='LONG' ? 'var(--os-green)' : 'var(--os-red)',
+          border: `1px solid ${s.direction==='LONG'?'var(--os-green)':'var(--os-red)'}33`,
+        }}>
+          {s.direction==='LONG'?'↑':'↓'} {s.strategyId.replace('_',' ').toUpperCase()}
+        </span>
+      ))}
+    </div>
+  )
+}
+
+function ScanDetail({ row }: { row: ScanRow }) {
+  return (
+    <div style={{ padding:'14px 16px', borderTop:'1px solid var(--os-border)', background:'var(--os-surface2)' }}>
+      <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr 1fr 1fr', gap:10, marginBottom:12 }}>
+        {[
+          { l:'RSI(14)',   v:row.rsi.toFixed(1),        c:rsiColor(row.rsi) },
+          { l:'EMA9',     v:row.ema9.toFixed(2),        c:'var(--os-blue)' },
+          { l:'EMA21',    v:row.ema21.toFixed(2),       c:'var(--os-cyan)' },
+          { l:'EMA50',    v:row.ema50.toFixed(2),       c:'var(--os-purple)' },
+          { l:'MACD Hist',v:row.macdHist.toFixed(4),    c:macdColor(row.macdHist) },
+          { l:'ATR(14)',  v:row.atrValue.toFixed(4),    c:'var(--os-t2)' },
+          { l:'Vol Ratio',v:`${row.volumeRatio.toFixed(2)}x`, c: row.volumeRatio>=1.5?'var(--os-amber)':'var(--os-t2)' },
+          { l:'EMA Trend',v: row.ema9>row.ema21 && row.ema21>row.ema50?'BULL':'BEAR', c: row.ema9>row.ema21?'var(--os-green)':'var(--os-red)' },
+        ].map(({l,v,c}) => (
+          <div key={l} style={{ padding:'6px 8px', background:'var(--os-surface)', borderRadius:4, border:'1px solid var(--os-border)' }}>
+            <div style={{ fontSize:8, color:'var(--os-t3)', marginBottom:2 }}>{l}</div>
+            <div style={{ fontFamily:'var(--font-mono)', fontSize:11, fontWeight:700, color:c }}>{v}</div>
           </div>
-          <span style={{ width: 1, height: 16, background: 'var(--os-border)', display: 'inline-block' }} />
-          <div style={{ display: 'flex', gap: 3 }}>
-            {(['ALL','BULLISH','BEARISH','NEUTRAL'] as SignalFilter[]).map(s => (
-              <button key={s} onClick={() => setSignal(s)} className={signal === s ? 'os-btn os-btn-primary' : 'os-btn'} style={{ fontSize: 9, padding: '2px 7px' }}>{s}</button>
-            ))}
+        ))}
+      </div>
+
+      {row.signals.length > 0 && (
+        <div>
+          <div style={{ fontSize:9, fontWeight:700, color:'var(--os-t2)', letterSpacing:'0.06em', marginBottom:6 }}>
+            CONFIRMED SIGNALS ({row.signals.length})
           </div>
-          <span style={{ width: 1, height: 16, background: 'var(--os-border)', display: 'inline-block' }} />
-          <div style={{ display: 'flex', gap: 3 }}>
-            <button onClick={() => setStrength('ANY')}       className={strength === 'ANY'       ? 'os-btn os-btn-primary' : 'os-btn'} style={{ fontSize: 9, padding: '2px 7px' }}>ANY</button>
-            <button onClick={() => setStrength('STRONG')}    className={strength === 'STRONG'    ? 'os-btn os-btn-primary' : 'os-btn'} style={{ fontSize: 9, padding: '2px 7px' }}>STRONG 70+</button>
-            <button onClick={() => setStrength('VERY_STRONG')} className={strength === 'VERY_STRONG' ? 'os-btn os-btn-primary' : 'os-btn'} style={{ fontSize: 9, padding: '2px 7px' }}>VERY STRONG 85+</button>
-          </div>
-          <span style={{ width: 1, height: 16, background: 'var(--os-border)', display: 'inline-block' }} />
-          <select value={sector} onChange={e => setSector(e.target.value)} className="os-input" style={{ fontSize: 10, padding: '2px 6px', height: 24 }}>
-            {SECTORS.map(s => <option key={s} value={s}>{s}</option>)}
-          </select>
-          <label style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 10, color: 'var(--os-t2)', cursor: 'pointer' }}>
-            <input type="checkbox" checked={highVol} onChange={e => setHighVol(e.target.checked)} style={{ accentColor: 'var(--os-blue)' }} />
-            High Volume (&gt;1.5x)
-          </label>
-          <span style={{ width: 1, height: 16, background: 'var(--os-border)', display: 'inline-block' }} />
-          <span style={{ fontSize: 9, color: 'var(--os-t3)' }}>SORT:</span>
-          {(['changePct','volume','rsi','strength','signal'] as SortKey[]).map(k => (
-            <button key={k} onClick={() => toggleSort(k)} className={sortKey === k ? 'os-btn os-btn-primary' : 'os-btn'} style={{ fontSize: 9, padding: '2px 7px' }}>
-              {k.toUpperCase()} {sortKey === k ? (sortDesc ? '↓' : '↑') : ''}
-            </button>
+          {row.signals.map(s => (
+            <div key={s.strategyId} style={{ marginBottom:4, display:'flex', alignItems:'center', gap:8 }}>
+              <span style={{
+                fontSize:8, padding:'2px 6px', borderRadius:3, fontWeight:700,
+                background: s.direction==='LONG' ? 'var(--os-green-glow)' : 'var(--os-red-glow)',
+                color:      s.direction==='LONG' ? 'var(--os-green)' : 'var(--os-red)',
+              }}>
+                {s.direction}
+              </span>
+              <span style={{ fontSize:10, color:'var(--os-t2)' }}>{s.strategyName}</span>
+              <span style={{ marginLeft:'auto', fontSize:9, color:'var(--os-t3)' }}>
+                Confidence: <span style={{ color: s.confidence>=75?'var(--os-green)':s.confidence>=50?'var(--os-amber)':'var(--os-red)', fontWeight:700 }}>{s.confidence}%</span>
+              </span>
+            </div>
           ))}
         </div>
+      )}
+
+      {row.error && (
+        <div style={{ fontSize:10, color:'var(--os-red)' }}>⚠ {row.error}</div>
+      )}
+    </div>
+  )
+}
+
+export default function ScannerView() {
+  const [rows,        setRows]        = useState<ScanRow[]>([])
+  const [loading,     setLoading]     = useState(false)
+  const [error,       setError]       = useState<string | null>(null)
+  const [scannedAt,   setScannedAt]   = useState<string | null>(null)
+  const [interval,    setIntervalKey] = useState('1h')
+  const [exchange,    setExchange]    = useState<ExchangeFilter>('ALL')
+  const [signalOnly,  setSignalOnly]  = useState(false)
+  const [sortKey,     setSortKey]     = useState<SortKey>('confidence')
+  const [sortDir,     setSortDir]     = useState<SortDir>('desc')
+  const [selected,    setSelected]    = useState<string | null>(null)
+  const [failed,      setFailed]      = useState<{symbol:string;error:string}[]>([])
+
+  const scan = useCallback(async () => {
+    setLoading(true)
+    setError(null)
+    try {
+      const params = new URLSearchParams({ interval, exchange: exchange === 'ALL' ? 'ALL' : exchange })
+      const res = await fetch(`/api/strategy/scan?${params}`)
+      if (!res.ok) throw new Error(`Scanner returned ${res.status}`)
+      const data = await res.json()
+      setRows(data.rows ?? [])
+      setFailed(data.failed ?? [])
+      setScannedAt(new Date(data.scannedAt).toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit',second:'2-digit'}))
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Scan failed')
+    } finally {
+      setLoading(false)
+    }
+  }, [interval, exchange])
+
+  // Auto-scan on mount
+  useEffect(() => { scan() }, [])  // eslint-disable-line react-hooks/exhaustive-deps
+
+  const sort = (key: SortKey) => {
+    if (sortKey === key) setSortDir(d => d === 'asc' ? 'desc' : 'asc')
+    else { setSortKey(key); setSortDir('desc') }
+  }
+
+  const filtered = useMemo(() => {
+    let d = signalOnly ? rows.filter(r => r.signals.length > 0) : rows
+    return [...d].sort((a, b) => {
+      let av: number, bv: number
+      switch (sortKey) {
+        case 'changePct':  av = a.changePct;   bv = b.changePct; break
+        case 'rsi':        av = a.rsi;          bv = b.rsi; break
+        case 'macdHist':   av = a.macdHist;     bv = b.macdHist; break
+        case 'volumeRatio':av = a.volumeRatio;  bv = b.volumeRatio; break
+        case 'confidence': av = a.topSignal?.confidence ?? 0; bv = b.topSignal?.confidence ?? 0; break
+        default:           av = 0; bv = 0
+      }
+      return sortDir === 'asc' ? av - bv : bv - av
+    })
+  }, [rows, sortKey, sortDir, signalOnly])
+
+  const bullCount = rows.filter(r => r.topSignal?.direction === 'LONG').length
+  const bearCount = rows.filter(r => r.topSignal?.direction === 'SHORT').length
+  const sigCount  = rows.filter(r => r.signals.length > 0).length
+
+  const SortTh = ({ k, label }: { k: SortKey; label: string }) => (
+    <th style={{ cursor:'pointer', userSelect:'none' }} onClick={() => sort(k)}>
+      {label} {sortKey===k ? (sortDir==='desc'?'↓':'↑') : ''}
+    </th>
+  )
+
+  return (
+    <div style={{ display:'flex', flexDirection:'column', height:'100%', background:'var(--os-bg)' }}>
+      {/* Header */}
+      <div style={{ padding:'8px 14px', borderBottom:'1px solid var(--os-border)', background:'var(--os-surface)', flexShrink:0 }}>
+        <div style={{ display:'flex', alignItems:'center', gap:8, marginBottom:6 }}>
+          <span style={{ fontSize:13, fontWeight:800, color:'var(--os-t1)' }}>MARKET SCANNER</span>
+          <span style={{ fontSize:9, color:'var(--os-t3)' }}>Real data · Yahoo Finance</span>
+          {scannedAt && <span style={{ fontSize:9, color:'var(--os-t3)', marginLeft:4 }}>Last scan: {scannedAt}</span>}
+          {loading && <span className="os-badge os-badge-blue" style={{ fontSize:8 }}><span style={{ display:'inline-block', animation:'os-pulse 1s ease infinite' }}>⟳</span> Scanning…</span>}
+          <div style={{ marginLeft:'auto', display:'flex', gap:6, alignItems:'center' }}>
+            <label style={{ display:'flex', alignItems:'center', gap:5, fontSize:10, color:'var(--os-t2)', cursor:'pointer' }}>
+              <input type="checkbox" checked={signalOnly} onChange={e => setSignalOnly(e.target.checked)} style={{ accentColor:'var(--os-blue)' }} />
+              Signals only
+            </label>
+            <button className="os-btn os-btn-primary" style={{ fontSize:10 }} onClick={scan} disabled={loading}>
+              {loading ? '…' : '▶ Scan'}
+            </button>
+          </div>
+        </div>
+
+        <div style={{ display:'flex', gap:8, alignItems:'center' }}>
+          <div style={{ display:'flex', gap:4 }}>
+            {(['ALL','NSE','FOREX','MCX','CRYPTO'] as ExchangeFilter[]).map(ex => (
+              <button key={ex} onClick={() => setExchange(ex)}
+                className={`os-btn ${exchange===ex?'os-btn-primary':''}`}
+                style={{ fontSize:9, padding:'2px 8px' }}>{ex}</button>
+            ))}
+          </div>
+          <div style={{ display:'flex', gap:4 }}>
+            {INTERVALS.map(iv => (
+              <button key={iv} onClick={() => setIntervalKey(iv)}
+                className={`os-btn ${interval===iv?'os-btn-primary':''}`}
+                style={{ fontSize:9, padding:'2px 6px' }}>{iv}</button>
+            ))}
+          </div>
+          {/* Stats */}
+          <div style={{ display:'flex', gap:8, marginLeft:'auto', fontSize:10 }}>
+            <span className="os-badge os-badge-green">{bullCount} ▲ LONG</span>
+            <span className="os-badge os-badge-red">{bearCount} ▼ SHORT</span>
+            <span className="os-badge os-badge-blue">{sigCount} signals</span>
+            <span style={{ color:'var(--os-t3)' }}>{rows.length} symbols</span>
+          </div>
+        </div>
       </div>
 
-      {/* Quick stats */}
-      <div style={{ flexShrink: 0, height: 40, display: 'flex', alignItems: 'center', gap: 16, padding: '0 14px', borderBottom: '1px solid var(--os-border)', background: 'var(--os-surface)', fontSize: 11 }}>
-        <span style={{ color: 'var(--os-green)' }}>▲ {bullCount} Bullish</span>
-        <span style={{ color: 'var(--os-red)' }}>▼ {bearCount} Bearish</span>
-        <span style={{ color: 'var(--os-t3)' }}>● {neutCount} Neutral</span>
-        <span style={{ width: 1, height: 16, background: 'var(--os-border)', display: 'inline-block' }} />
-        <span style={{ color: 'var(--os-amber)' }}>⚡ {volLeaders} Vol leaders</span>
-        <span style={{ color: 'var(--os-cyan)' }}>↑ {nearHighCnt} Near 52W high</span>
-        <span style={{ color: 'var(--os-t3)' }}>↓ {nearLowCnt} Near 52W low</span>
-      </div>
+      {/* Error */}
+      {error && (
+        <div style={{ padding:'8px 14px', background:'var(--os-red-glow)', borderBottom:'1px solid var(--os-border)', fontSize:10, color:'var(--os-red)' }}>
+          ✕ {error}
+        </div>
+      )}
+
+      {/* Failed symbols notice */}
+      {failed.length > 0 && (
+        <div style={{ padding:'4px 14px', background:'rgba(245,158,11,0.08)', borderBottom:'1px solid var(--os-border)', fontSize:9, color:'var(--os-amber)' }}>
+          ⚠ {failed.length} symbol{failed.length>1?'s':''} failed to load: {failed.map(f => f.symbol).join(', ')}
+        </div>
+      )}
+
+      {/* Empty state */}
+      {!loading && rows.length === 0 && !error && (
+        <div style={{ flex:1, display:'flex', alignItems:'center', justifyContent:'center', flexDirection:'column', gap:12 }}>
+          <div style={{ fontSize:32, opacity:.25 }}>📡</div>
+          <div style={{ fontSize:13, color:'var(--os-t2)' }}>No data yet — run a scan</div>
+          <button className="os-btn os-btn-primary" onClick={scan}>▶ Scan Markets</button>
+        </div>
+      )}
 
       {/* Table */}
-      <div style={{ flex: 1, overflowY: 'auto', overflowX: 'auto' }}>
-        {filtered.length === 0 ? (
-          <div style={{ padding: 60, textAlign: 'center', color: 'var(--os-t3)', fontSize: 13 }}>
-            No results match your filters. Try relaxing the criteria.
-          </div>
-        ) : (
-          <table className="os-table" style={{ width: '100%', minWidth: 900 }}>
+      {rows.length > 0 && (
+        <div style={{ flex:1, overflowY:'auto' }}>
+          <table className="os-table" style={{ width:'100%', minWidth:900 }}>
             <thead>
               <tr>
-                <th style={{ width: 30 }}>#</th>
-                <th style={{ width: 110 }}>SYMBOL</th>
-                <th style={{ width: 160 }}>NAME</th>
-                <th style={{ width: 90, textAlign: 'right' }}>PRICE</th>
-                <th style={{ width: 80, textAlign: 'right', cursor: 'pointer' }} onClick={() => toggleSort('changePct')}>CHG% {sortKey === 'changePct' ? (sortDesc ? '↓' : '↑') : ''}</th>
-                <th style={{ width: 100, cursor: 'pointer' }} onClick={() => toggleSort('volume')}>VOLUME {sortKey === 'volume' ? (sortDesc ? '↓' : '↑') : ''}</th>
-                <th style={{ width: 60, textAlign: 'center', cursor: 'pointer' }} onClick={() => toggleSort('rsi')}>RSI {sortKey === 'rsi' ? (sortDesc ? '↓' : '↑') : ''}</th>
-                <th style={{ width: 90 }}>MACD</th>
-                <th style={{ width: 110 }}>SIGNAL</th>
-                <th style={{ width: 140 }}>SETUP</th>
-                <th style={{ width: 100, cursor: 'pointer' }} onClick={() => toggleSort('strength')}>STRENGTH {sortKey === 'strength' ? (sortDesc ? '↓' : '↑') : ''}</th>
+                <th>SYMBOL</th>
+                <th>EXCH</th>
+                <th style={{ cursor:'pointer' }} onClick={() => sort('changePct')}>PRICE / CHG {sortKey==='changePct'?(sortDir==='desc'?'↓':'↑'):''}</th>
+                <SortTh k="volumeRatio" label="VOL RATIO" />
+                <SortTh k="rsi" label="RSI" />
+                <SortTh k="macdHist" label="MACD H" />
+                <th>EMA TREND</th>
+                <SortTh k="confidence" label="SIGNAL" />
               </tr>
             </thead>
             <tbody>
-              {filtered.map((r, i) => {
-                const macd  = macdLabel(r.macd)
-                const sig   = signalLabel(r.signal)
-                const isExp = expanded === r.symbol
+              {filtered.map(row => {
+                const isSelected = selected === row.symbol
+                const emaTrend = row.ema9 > row.ema21 && row.ema21 > row.ema50 ? 'BULL'
+                               : row.ema9 < row.ema21 && row.ema21 < row.ema50 ? 'BEAR' : 'MIX'
                 return (
                   <>
-                    <tr key={r.symbol} onClick={() => setExpanded(isExp ? null : r.symbol)} style={{ cursor: 'pointer', background: isExp ? 'var(--os-active)' : undefined }}>
-                      <td style={{ color: 'var(--os-t3)', fontSize: 10 }}>{i + 1}</td>
+                    <tr key={row.symbol} style={{ cursor:'pointer', background: isSelected ? 'var(--os-active)' : undefined }}
+                      onClick={() => setSelected(s => s === row.symbol ? null : row.symbol)}>
+                      <td style={{ fontWeight:700, fontSize:11 }}>{row.symbol}</td>
+                      <td><span className="os-badge" style={{ fontSize:8 }}>{row.exchange}</span></td>
                       <td>
-                        <span style={{ fontWeight: 700, fontSize: 11 }}>{r.symbol}</span>
-                        <span className="os-badge" style={{ fontSize: 8, marginLeft: 4 }}>{r.exchange}</span>
-                        {r.nearHigh && <span className="os-badge os-badge-amber" style={{ fontSize: 8, marginLeft: 3 }}>52H</span>}
+                        <div style={{ fontFamily:'var(--font-mono)', fontSize:11 }}>
+                          <span>{row.price > 0 ? row.price.toLocaleString('en-IN', { maximumFractionDigits: 4 }) : '—'}</span>
+                          <span style={{ marginLeft:6, fontSize:9,
+                            color: row.changePct >= 0 ? 'var(--os-green)' : 'var(--os-red)' }}>
+                            {row.changePct >= 0 ? '+' : ''}{row.changePct.toFixed(2)}%
+                          </span>
+                        </div>
                       </td>
-                      <td style={{ fontSize: 10, color: 'var(--os-t2)', maxWidth: 150, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.name}</td>
-                      <td style={{ textAlign: 'right', fontFamily: 'var(--font-mono)', fontSize: 11 }}>{r.price.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
-                      <td style={{ textAlign: 'right' }}>
-                        <span className={`os-badge ${r.changePct >= 0 ? 'os-badge-green' : 'os-badge-red'}`} style={{ fontSize: 10 }}>
-                          {r.changePct >= 0 ? '+' : ''}{r.changePct.toFixed(2)}%
+                      <td><VolBar ratio={row.volumeRatio} /></td>
+                      <td style={{ fontFamily:'var(--font-mono)', fontSize:11, color:rsiColor(row.rsi) }}>
+                        {row.rsi > 0 ? row.rsi.toFixed(1) : '—'}
+                      </td>
+                      <td style={{ fontFamily:'var(--font-mono)', fontSize:10, color:macdColor(row.macdHist) }}>
+                        {row.macdHist !== 0 ? (row.macdHist > 0 ? '+' : '') + row.macdHist.toFixed(4) : '—'}
+                      </td>
+                      <td>
+                        <span style={{ fontSize:9, fontWeight:700,
+                          color: emaTrend==='BULL'?'var(--os-green)':emaTrend==='BEAR'?'var(--os-red)':'var(--os-t3)' }}>
+                          {emaTrend}
                         </span>
                       </td>
-                      <td>
-                        <div style={{ fontSize: 10, fontFamily: 'var(--font-mono)' }}>{fmtVol(r.volume)}</div>
-                        <div style={{ height: 3, background: 'var(--os-surface2)', borderRadius: 2, marginTop: 2, width: 60 }}>
-                          <div style={{ height: '100%', borderRadius: 2, background: r.volumeRatio > 1.5 ? 'var(--os-amber)' : r.volumeRatio > 1 ? 'var(--os-blue)' : 'var(--os-t3)', width: `${Math.min(r.volumeRatio * 50, 100)}%` }} />
-                        </div>
-                        <div style={{ fontSize: 8, color: 'var(--os-t3)' }}>{r.volumeRatio.toFixed(2)}x avg</div>
-                      </td>
-                      <td style={{ textAlign: 'center', fontFamily: 'var(--font-mono)', fontSize: 12, fontWeight: 700, color: rsiColor(r.rsi) }}>{r.rsi.toFixed(1)}</td>
-                      <td><span className={`os-badge ${macd.cls}`} style={{ fontSize: 9 }}>{macd.text}</span></td>
-                      <td><span className={`os-badge ${sig.cls}`} style={{ fontSize: 9 }}>{sig.text}</span></td>
-                      <td style={{ fontSize: 10, color: 'var(--os-t2)', fontStyle: 'italic', maxWidth: 130, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                        {r.setup}{r.pattern && <span style={{ color: 'var(--os-t3)', marginLeft: 4 }}>· {r.pattern}</span>}
-                      </td>
-                      <td>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
-                          <div style={{ flex: 1, height: 4, background: 'var(--os-surface2)', borderRadius: 2, minWidth: 40 }}>
-                            <div style={{ height: '100%', borderRadius: 2, background: r.strength >= 80 ? 'var(--os-green)' : r.strength >= 60 ? 'var(--os-blue)' : r.strength >= 40 ? 'var(--os-amber)' : 'var(--os-red)', width: `${r.strength}%` }} />
-                          </div>
-                          <span style={{ fontSize: 10, fontFamily: 'var(--font-mono)', color: 'var(--os-t2)', minWidth: 24 }}>{r.strength}</span>
-                        </div>
-                      </td>
+                      <td><SignalPills signals={row.signals} /></td>
                     </tr>
-                    {isExp && (
-                      <tr key={`${r.symbol}-exp`} style={{ background: 'var(--os-surface)' }}>
-                        <td colSpan={11} style={{ padding: '10px 16px' }}>
-                          <div style={{ display: 'flex', gap: 24, fontSize: 11, flexWrap: 'wrap' }}>
-                            <span><span style={{ color: 'var(--os-t3)' }}>52W High: </span><span style={{ fontFamily: 'var(--font-mono)', color: 'var(--os-green)' }}>{r.high52w.toLocaleString('en-IN')}</span></span>
-                            <span><span style={{ color: 'var(--os-t3)' }}>52W Low: </span><span style={{ fontFamily: 'var(--font-mono)', color: 'var(--os-red)' }}>{r.low52w.toLocaleString('en-IN')}</span></span>
-                            {r.lotSize && <span><span style={{ color: 'var(--os-t3)' }}>Lot: </span><span style={{ fontFamily: 'var(--font-mono)' }}>{r.lotSize}</span></span>}
-                            <span><span style={{ color: 'var(--os-t3)' }}>Sector: </span>{r.sector}</span>
-                            <span><span style={{ color: 'var(--os-t3)' }}>Cap: </span>{r.marketCap}</span>
-                            <span><span style={{ color: 'var(--os-t3)' }}>EMA Pos: </span><span className={`os-badge ${r.emaPosition === 'ABOVE_ALL' ? 'os-badge-green' : r.emaPosition === 'BELOW_ALL' ? 'os-badge-red' : ''}`} style={{ fontSize: 9 }}>{r.emaPosition.replace(/_/g, ' ')}</span></span>
-                          </div>
+                    {isSelected && (
+                      <tr key={`${row.symbol}-detail`}>
+                        <td colSpan={8} style={{ padding:0 }}>
+                          <ScanDetail row={row} />
                         </td>
                       </tr>
                     )}
@@ -236,8 +325,8 @@ export default function ScannerView() {
               })}
             </tbody>
           </table>
-        )}
-      </div>
+        </div>
+      )}
     </div>
   )
 }

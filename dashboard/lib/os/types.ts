@@ -1,6 +1,7 @@
 export type OSView =
   | 'terminal'
   | 'scanner'
+  | 'signals'
   | 'strategy'
   | 'backtest'
   | 'portfolio'

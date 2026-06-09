@@ -13,6 +13,7 @@ const RiskView      = dynamic(() => import('@/components/risk/RiskView'),       
 const JournalView   = dynamic(() => import('@/components/journal/JournalView'),    { ssr: false, loading: () => <ViewLoader /> })
 const AlertsView    = dynamic(() => import('@/components/alerts/AlertsView'),      { ssr: false, loading: () => <ViewLoader /> })
 const BrokerPanel   = dynamic(() => import('@/components/BrokerPanel'),            { ssr: false, loading: () => <ViewLoader /> })
+const SignalQueue   = dynamic(() => import('@/components/signals/SignalQueue'),    { ssr: false, loading: () => <ViewLoader /> })
 const AICopilot     = dynamic(() => import('@/components/ai/AICopilot'),           { ssr: false })
 
 function ViewLoader() {
@@ -151,6 +152,10 @@ const NAV_ITEMS: { view: OSView; label: string; icon: React.ReactNode }[] = [
     icon: <svg width="18" height="18" viewBox="0 0 18 18" fill="none"><circle cx="8" cy="8" r="5" stroke="currentColor" strokeWidth="1.3" /><path d="M12 12l3.5 3.5" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" /><path d="M8 5v6M5 8h6" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" /></svg>,
   },
   {
+    view: 'signals', label: 'Signals',
+    icon: <svg width="18" height="18" viewBox="0 0 18 18" fill="none"><path d="M9 2v2M9 14v2M2 9h2M14 9h2M4.22 4.22l1.41 1.41M12.37 12.37l1.41 1.41M4.22 13.78l1.41-1.41M12.37 5.63l1.41-1.41" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round"/><circle cx="9" cy="9" r="3" stroke="currentColor" strokeWidth="1.3"/></svg>,
+  },
+  {
     view: 'strategy', label: 'Strategy',
     icon: <svg width="18" height="18" viewBox="0 0 18 18" fill="none"><rect x="2" y="3" width="14" height="3" rx="1" stroke="currentColor" strokeWidth="1.3" /><rect x="2" y="8" width="10" height="3" rx="1" stroke="currentColor" strokeWidth="1.3" /><rect x="2" y="13" width="7" height="2" rx="1" stroke="currentColor" strokeWidth="1.3" /></svg>,
   },
@@ -283,6 +288,7 @@ function ActiveView({ view }: { view: OSView }) {
   switch (view) {
     case 'terminal':  return <TerminalView />
     case 'scanner':   return <ScannerView />
+    case 'signals':   return <SignalQueue />
     case 'strategy':
     case 'backtest':  return <StrategyView initialTab={view === 'backtest' ? 'backtest' : 'library'} />
     case 'portfolio': return <PortfolioView />
