@@ -45,11 +45,16 @@ export interface AutoTraderLogEntry {
 }
 
 export const AVAILABLE_STRATEGIES = [
-  { id: 'ema_cross',    label: 'EMA Cross' },
-  { id: 'rsi_reversal', label: 'RSI Reversal' },
-  { id: 'macd_cross',   label: 'MACD Cross' },
-  { id: 'supertrend',   label: 'Supertrend' },
-  { id: 'bb_squeeze',   label: 'BB Squeeze' },
+  { id: 'ema_cross',          label: 'EMA 9/21 Cross' },
+  { id: 'rsi_reversal',       label: 'RSI Reversal' },
+  { id: 'macd_cross',         label: 'MACD Cross' },
+  { id: 'supertrend',         label: 'Supertrend Flip' },
+  { id: 'bb_squeeze',         label: 'BB Squeeze Breakout' },
+  { id: 'golden_cross',       label: 'Golden/Death Cross' },
+  { id: 'rsi_divergence',     label: 'RSI Divergence' },
+  { id: 'engulfing',          label: 'Engulfing Candle' },
+  { id: 'donchian_breakout',  label: 'Donchian Breakout' },
+  { id: 'vwap_bounce',        label: 'VWAP Bounce' },
 ] as const
 
 export function createDefaultConfig(): AutoTraderConfig {

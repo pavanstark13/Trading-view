@@ -6,7 +6,7 @@
  */
 
 import type { Candle } from './indicators'
-import { ema, rsi, macd, atr, sma, stoch, supertrend, bollingerBands } from './indicators'
+import { ema, rsi, macd, atr, sma, stoch, supertrend, bollingerBands, rsiDivergence } from './indicators'
 
 export interface TradingSignal {
   strategyId:  string
@@ -535,6 +535,503 @@ const bbSqueezeStrategy: StrategyDef = {
   },
 }
 
+// ── Strategy 6: Golden Cross / Death Cross ────────────────────────────────────
+// EMA50 × EMA200 — the most widely followed trend signal on any timeframe.
+// "Golden Cross" = long-term uptrend confirmation; "Death Cross" = bear market.
+const goldenCrossStrategy: StrategyDef = {
+  id: 'golden_cross',
+  name: 'Golden / Death Cross',
+  description: 'EMA50 crosses EMA200 — the most watched institutional trend signal. Long-only on upward crosses, short on downward.',
+  minCandles: 220,
+
+  analyze(candles, symbol, interval) {
+    if (candles.length < 220) return null
+    const closes = candles.map(c => c.close)
+    const n = candles.length - 1
+
+    const ema50arr  = ema(closes, 50)
+    const ema200arr = ema(closes, 200)
+    const rsiArr    = rsi(closes, 14)
+    const macdRes   = macd(closes)
+    const atrArr    = atr(candles, 14)
+    const volArr    = candles.map(c => c.volume ?? 0)
+    const volAvg    = last(sma(volArr, 20))
+    const snap      = indicatorSnapshot(candles)
+
+    const goldCross = ema50arr[n - 1] <= ema200arr[n - 1] && ema50arr[n] > ema200arr[n]
+    const deathCross = ema50arr[n - 1] >= ema200arr[n - 1] && ema50arr[n] < ema200arr[n]
+
+    if (!goldCross && !deathCross) return null
+
+    const direction = goldCross ? 'LONG' : 'SHORT'
+    const entry  = closes[n]
+    const atrVal = last(atrArr)
+    const rsiVal = last(rsiArr)
+    const volSpike = (candles[n].volume ?? 0) > volAvg * 1.2
+
+    const reasons: string[] = []
+    const warnings: string[] = []
+    let score = 0
+
+    if (goldCross) {
+      reasons.push(`Golden Cross: EMA50 (${ema50arr[n].toFixed(2)}) crossed above EMA200 (${ema200arr[n].toFixed(2)})`)
+      score += 2 // Major signal — worth double
+
+      if (closes[n] > ema50arr[n]) { reasons.push('Price above both EMAs — strong bull structure'); score++ }
+      else warnings.push('Price still below EMA50 — wait for reclaim')
+
+      if (rsiVal > 50 && rsiVal < 75) { reasons.push(`RSI ${rsiVal.toFixed(1)} — bullish momentum zone`); score++ }
+      else if (rsiVal >= 75) warnings.push(`RSI ${rsiVal.toFixed(1)} — overbought after cross, wait for pullback`)
+      else warnings.push(`RSI ${rsiVal.toFixed(1)} — momentum weak, consider waiting`)
+
+      if (last(macdRes.macd) > last(macdRes.signal)) { reasons.push('MACD bullish — momentum aligned with cross'); score++ }
+      if (last(macdRes.hist) > 0) { reasons.push('MACD histogram positive'); score++ }
+      if (volSpike) { reasons.push('Volume surge — institutional accumulation on cross'); score++ }
+    } else {
+      reasons.push(`Death Cross: EMA50 (${ema50arr[n].toFixed(2)}) crossed below EMA200 (${ema200arr[n].toFixed(2)})`)
+      score += 2
+
+      if (closes[n] < ema50arr[n]) { reasons.push('Price below both EMAs — strong bear structure'); score++ }
+      else warnings.push('Price still above EMA50 — wait for breakdown')
+
+      if (rsiVal < 50 && rsiVal > 25) { reasons.push(`RSI ${rsiVal.toFixed(1)} — bearish momentum zone`); score++ }
+      else if (rsiVal <= 25) warnings.push(`RSI ${rsiVal.toFixed(1)} — oversold after cross, risky short`)
+      else warnings.push(`RSI ${rsiVal.toFixed(1)} — momentum still high, early signal`)
+
+      if (last(macdRes.macd) < last(macdRes.signal)) { reasons.push('MACD bearish — momentum aligned with cross'); score++ }
+      if (last(macdRes.hist) < 0) { reasons.push('MACD histogram negative'); score++ }
+      if (volSpike) { reasons.push('Volume surge — institutional distribution on cross'); score++ }
+    }
+
+    if (score < 4) return null
+
+    const { stopLoss, target, target2, riskReward } = slTarget(direction, entry, atrVal, 2.0, 2.5)
+    const confidence = Math.min(100, Math.round((score / 8) * 100))
+
+    return {
+      strategyId: 'golden_cross', strategyName: 'Golden / Death Cross',
+      symbol, direction, entry, stopLoss, target, target2, riskReward,
+      atrValue: atrVal, reasons, warnings, confidence,
+      confirmedAt: candles[n].time, interval,
+      indicators: snap,
+    }
+  },
+}
+
+// ── Strategy 7: RSI Divergence ────────────────────────────────────────────────
+// Price makes new high/low but RSI doesn't — signals exhaustion / reversal.
+// Used by professional traders worldwide. Very high accuracy when confluent.
+const rsiDivergenceStrategy: StrategyDef = {
+  id: 'rsi_divergence',
+  name: 'RSI Divergence',
+  description: 'Price forms higher high / lower low while RSI forms lower high / higher low — classically signals trend exhaustion and reversal.',
+  minCandles: 50,
+
+  analyze(candles, symbol, interval) {
+    if (candles.length < 50) return null
+    const closes = candles.map(c => c.close)
+    const n = candles.length - 1
+
+    const rsiArr   = rsi(closes, 14)
+    const divResult = rsiDivergence(closes, rsiArr)
+    const ema50v   = last(ema(closes, 50))
+    const ema200v  = last(ema(closes, Math.min(200, closes.length - 1)))
+    const atrArr   = atr(candles, 14)
+    const macdRes  = macd(closes)
+    const stochRes = stoch(candles, 14, 3)
+    const snap     = indicatorSnapshot(candles)
+
+    if (!divResult.bullish && !divResult.bearish) return null
+
+    const direction = divResult.bullish ? 'LONG' : 'SHORT'
+    const entry  = closes[n]
+    const atrVal = last(atrArr)
+    const rsiVal = last(rsiArr)
+
+    const reasons: string[] = []
+    const warnings: string[] = []
+    let score = 0
+
+    if (divResult.bullish) {
+      reasons.push('Bullish RSI divergence: price lower low, RSI higher low — sellers exhausted')
+      score += 2
+
+      if (rsiVal < 45) { reasons.push(`RSI ${rsiVal.toFixed(1)} — still depressed, reversal room available`); score++ }
+      else warnings.push(`RSI ${rsiVal.toFixed(1)} — not in oversold zone, divergence less reliable`)
+
+      const bullishBar = closes[n] > candles[n].open
+      if (bullishBar) { reasons.push('Bullish candle body on divergence bar — buyers stepping in'); score++ }
+
+      if (last(stochRes.k) > last(stochRes.d) && last(stochRes.k) < 30) {
+        reasons.push(`Stochastic K(${last(stochRes.k).toFixed(0)}) crossing up from oversold — momentum shift`)
+        score++
+      }
+
+      if (last(macdRes.hist) > prev(macdRes.hist)) { reasons.push('MACD histogram improving — momentum shifting up'); score++ }
+
+      if (closes[n] > ema200v) { reasons.push('Price above EMA200 — bull market pullback, high RR'); score++ }
+      else warnings.push('Price below EMA200 — counter-trend reversal, reduce position size')
+    } else {
+      reasons.push('Bearish RSI divergence: price higher high, RSI lower high — buyers exhausted')
+      score += 2
+
+      if (rsiVal > 55) { reasons.push(`RSI ${rsiVal.toFixed(1)} — still elevated, reversal room available`); score++ }
+      else warnings.push(`RSI ${rsiVal.toFixed(1)} — not in overbought zone, divergence less reliable`)
+
+      const bearishBar = closes[n] < candles[n].open
+      if (bearishBar) { reasons.push('Bearish candle body on divergence bar — sellers stepping in'); score++ }
+
+      if (last(stochRes.k) < last(stochRes.d) && last(stochRes.k) > 70) {
+        reasons.push(`Stochastic K(${last(stochRes.k).toFixed(0)}) crossing down from overbought — momentum shift`)
+        score++
+      }
+
+      if (last(macdRes.hist) < prev(macdRes.hist)) { reasons.push('MACD histogram deteriorating — momentum shifting down'); score++ }
+
+      if (closes[n] < ema200v) { reasons.push('Price below EMA200 — bear market, high-probability short'); score++ }
+      else warnings.push('Price above EMA200 — counter-trend short, reduce position size')
+    }
+
+    if (score < 4) return null
+
+    const { stopLoss, target, target2, riskReward } = slTarget(direction, entry, atrVal, 1.5, 2.0)
+    const confidence = Math.min(100, Math.round((score / 8) * 100))
+
+    return {
+      strategyId: 'rsi_divergence', strategyName: 'RSI Divergence',
+      symbol, direction, entry, stopLoss, target, target2, riskReward,
+      atrValue: atrVal, reasons, warnings, confidence,
+      confirmedAt: candles[n].time, interval,
+      indicators: snap,
+    }
+  },
+}
+
+// ── Strategy 8: Engulfing Candle Pattern ──────────────────────────────────────
+// A large candle completely engulfs the prior bar's body. One of the most
+// reliable single-candle reversal patterns. Used in Japanese candlestick analysis.
+const engulfingStrategy: StrategyDef = {
+  id: 'engulfing',
+  name: 'Engulfing Candle Reversal',
+  description: 'Bullish or bearish engulfing candle at key trend extreme, confirmed by RSI and trend context.',
+  minCandles: 50,
+
+  analyze(candles, symbol, interval) {
+    if (candles.length < 50) return null
+    const closes = candles.map(c => c.close)
+    const n = candles.length - 1
+
+    const curr = candles[n]
+    const p1   = candles[n - 1]
+
+    const currBody = Math.abs(curr.close - curr.open)
+    const prevBody = Math.abs(p1.close   - p1.open)
+    if (currBody === 0 || prevBody === 0) return null
+
+    // Bullish engulfing: prev bar is bearish, curr bar is bullish AND larger
+    const bullEngulf = p1.close < p1.open
+      && curr.close > curr.open
+      && curr.open  <= p1.close
+      && curr.close >= p1.open
+      && currBody > prevBody * 1.1  // current body must be meaningfully larger
+
+    // Bearish engulfing: prev bar is bullish, curr bar is bearish AND larger
+    const bearEngulf = p1.close > p1.open
+      && curr.close < curr.open
+      && curr.open  >= p1.close
+      && curr.close <= p1.open
+      && currBody > prevBody * 1.1
+
+    if (!bullEngulf && !bearEngulf) return null
+
+    const rsiArr   = rsi(closes, 14)
+    const ema50v   = last(ema(closes, 50))
+    const ema200v  = last(ema(closes, Math.min(200, closes.length - 1)))
+    const atrArr   = atr(candles, 14)
+    const macdRes  = macd(closes)
+    const volArr   = candles.map(c => c.volume ?? 0)
+    const volAvg   = last(sma(volArr, 20))
+    const snap     = indicatorSnapshot(candles)
+
+    const direction = bullEngulf ? 'LONG' : 'SHORT'
+    const entry  = curr.close
+    const atrVal = last(atrArr)
+    const rsiVal = last(rsiArr)
+    const volSpike = (curr.volume ?? 0) > volAvg * 1.15
+    const engulfRatio = (currBody / prevBody).toFixed(2)
+
+    const reasons: string[] = []
+    const warnings: string[] = []
+    let score = 0
+
+    if (bullEngulf) {
+      reasons.push(`Bullish engulfing candle (${engulfRatio}× previous body) — strong reversal signal`)
+      score += 2
+
+      // Check we're at a potential low (not in middle of range)
+      const low10 = Math.min(...candles.slice(-10).map(c => c.low))
+      if (curr.low <= low10 * 1.005) { reasons.push('Pattern forming near 10-bar swing low — reversal context strong'); score++ }
+      else warnings.push('Engulfing not at a clear swing low — weaker reversal context')
+
+      if (rsiVal < 50) { reasons.push(`RSI ${rsiVal.toFixed(1)} — bullish room available`); score++ }
+      else warnings.push(`RSI ${rsiVal.toFixed(1)} — not oversold, weaker reversal setup`)
+
+      if (closes[n] > ema50v) { reasons.push('Price above EMA50 — bullish trend context'); score++ }
+      if (closes[n] > ema200v) { reasons.push('Price above EMA200 — bull market, high-probability long'); score++ }
+
+      if (last(macdRes.hist) > prev(macdRes.hist)) { reasons.push('MACD momentum improving'); score++ }
+      if (volSpike) { reasons.push('Volume confirms engulfing — institutional buying detected'); score++ }
+    } else {
+      reasons.push(`Bearish engulfing candle (${engulfRatio}× previous body) — strong reversal signal`)
+      score += 2
+
+      const high10 = Math.max(...candles.slice(-10).map(c => c.high))
+      if (curr.high >= high10 * 0.995) { reasons.push('Pattern forming near 10-bar swing high — reversal context strong'); score++ }
+      else warnings.push('Engulfing not at a clear swing high — weaker reversal context')
+
+      if (rsiVal > 50) { reasons.push(`RSI ${rsiVal.toFixed(1)} — bearish room available`); score++ }
+      else warnings.push(`RSI ${rsiVal.toFixed(1)} — not overbought, weaker reversal setup`)
+
+      if (closes[n] < ema50v) { reasons.push('Price below EMA50 — bearish trend context'); score++ }
+      if (closes[n] < ema200v) { reasons.push('Price below EMA200 — bear market, high-probability short'); score++ }
+
+      if (last(macdRes.hist) < prev(macdRes.hist)) { reasons.push('MACD momentum deteriorating'); score++ }
+      if (volSpike) { reasons.push('Volume confirms engulfing — institutional selling detected'); score++ }
+    }
+
+    if (score < 4) return null
+
+    const { stopLoss, target, target2, riskReward } = slTarget(direction, entry, atrVal, 1.5, 2.0)
+    const confidence = Math.min(100, Math.round((score / 8) * 100))
+
+    return {
+      strategyId: 'engulfing', strategyName: 'Engulfing Candle Reversal',
+      symbol, direction, entry, stopLoss, target, target2, riskReward,
+      atrValue: atrVal, reasons, warnings, confidence,
+      confirmedAt: candles[n].time, interval,
+      indicators: snap,
+    }
+  },
+}
+
+// ── Strategy 9: Donchian Channel Breakout ────────────────────────────────────
+// Turtle Trading system: break above 20-bar high = long, below 20-bar low = short.
+// Developed by Richard Dennis. One of the most profitable systematic strategies
+// ever documented (Turtle Traders experiment, 1983).
+const donchianBreakoutStrategy: StrategyDef = {
+  id: 'donchian_breakout',
+  name: 'Donchian Channel Breakout',
+  description: '20-bar high/low breakout (Turtle Trading). Price closes above 20-period high or below 20-period low with volume and trend confirmation.',
+  minCandles: 60,
+
+  analyze(candles, symbol, interval) {
+    if (candles.length < 60) return null
+    const closes = candles.map(c => c.close)
+    const n = candles.length - 1
+
+    // 20-bar Donchian channel (exclude current bar from range to avoid look-ahead)
+    const lookback = candles.slice(n - 20, n)
+    const donchianHigh = Math.max(...lookback.map(c => c.high))
+    const donchianLow  = Math.min(...lookback.map(c => c.low))
+
+    const bullBreak = candles[n].close > donchianHigh
+    const bearBreak = candles[n].close < donchianLow
+
+    if (!bullBreak && !bearBreak) return null
+
+    const rsiArr  = rsi(closes, 14)
+    const ema50v  = last(ema(closes, 50))
+    const ema200v = last(ema(closes, Math.min(200, closes.length - 1)))
+    const atrArr  = atr(candles, 14)
+    const macdRes = macd(closes)
+    const volArr  = candles.map(c => c.volume ?? 0)
+    const volAvg  = last(sma(volArr, 20))
+    const snap    = indicatorSnapshot(candles)
+
+    const direction = bullBreak ? 'LONG' : 'SHORT'
+    const entry  = closes[n]
+    const atrVal = last(atrArr)
+    const rsiVal = last(rsiArr)
+    const volSpike = (candles[n].volume ?? 0) > volAvg * 1.2
+    const breakoutMagnitude = bullBreak
+      ? ((entry - donchianHigh) / donchianHigh * 100).toFixed(2)
+      : ((donchianLow  - entry) / donchianLow  * 100).toFixed(2)
+
+    const reasons: string[] = []
+    const warnings: string[] = []
+    let score = 0
+
+    if (bullBreak) {
+      reasons.push(`Price broke above 20-bar Donchian high (${donchianHigh.toFixed(2)}) by ${breakoutMagnitude}%`)
+      score += 2
+
+      if (closes[n] > ema50v)  { reasons.push(`Price above EMA50 (${ema50v.toFixed(2)}) — trend confirms breakout`); score++ }
+      else warnings.push('Price below EMA50 — breakout against intermediate trend')
+
+      if (closes[n] > ema200v) { reasons.push('Price above EMA200 — bull market breakout, strongest setup'); score++ }
+      else warnings.push('Price below EMA200 — counter-trend breakout, reduce size')
+
+      if (rsiVal > 50 && rsiVal < 80) { reasons.push(`RSI ${rsiVal.toFixed(1)} — momentum supports breakout`); score++ }
+      else if (rsiVal >= 80) warnings.push(`RSI ${rsiVal.toFixed(1)} — overbought, partial position only`)
+
+      if (last(macdRes.macd) > last(macdRes.signal)) { reasons.push('MACD bullish — momentum confirms breakout direction'); score++ }
+      if (volSpike) { reasons.push('Volume surge validates breakout — institutions participating'); score++ }
+    } else {
+      reasons.push(`Price broke below 20-bar Donchian low (${donchianLow.toFixed(2)}) by ${breakoutMagnitude}%`)
+      score += 2
+
+      if (closes[n] < ema50v)  { reasons.push(`Price below EMA50 (${ema50v.toFixed(2)}) — trend confirms breakdown`); score++ }
+      else warnings.push('Price above EMA50 — breakdown against intermediate trend')
+
+      if (closes[n] < ema200v) { reasons.push('Price below EMA200 — bear market breakdown, strongest setup'); score++ }
+      else warnings.push('Price above EMA200 — counter-trend breakdown, reduce size')
+
+      if (rsiVal < 50 && rsiVal > 20) { reasons.push(`RSI ${rsiVal.toFixed(1)} — bearish momentum supports breakdown`); score++ }
+      else if (rsiVal <= 20) warnings.push(`RSI ${rsiVal.toFixed(1)} — oversold, partial position only`)
+
+      if (last(macdRes.macd) < last(macdRes.signal)) { reasons.push('MACD bearish — momentum confirms breakdown direction'); score++ }
+      if (volSpike) { reasons.push('Volume surge validates breakdown — distribution confirmed'); score++ }
+    }
+
+    if (score < 4) return null
+
+    // SL = 10-bar ATR inside the channel for tighter risk
+    const { stopLoss, target, target2, riskReward } = slTarget(direction, entry, atrVal, 2.0, 2.5)
+    const confidence = Math.min(100, Math.round((score / 8) * 100))
+
+    return {
+      strategyId: 'donchian_breakout', strategyName: 'Donchian Channel Breakout',
+      symbol, direction, entry, stopLoss, target, target2, riskReward,
+      atrValue: atrVal, reasons, warnings, confidence,
+      confirmedAt: candles[n].time, interval,
+      indicators: snap,
+    }
+  },
+}
+
+// ── Strategy 10: VWAP + EMA Confluence Bounce ─────────────────────────────────
+// Price pulls back to VWAP and bounces with EMA stack alignment.
+// VWAP is the primary reference for institutional intraday execution.
+// Works best on intraday timeframes (1m–4h). Validated across NSE, Forex, Crypto.
+const vwapBounceStrategy: StrategyDef = {
+  id: 'vwap_bounce',
+  name: 'VWAP + EMA Confluence Bounce',
+  description: 'Price pulls back to VWAP while EMA9 > EMA21 > EMA50 (bull) or EMA9 < EMA21 < EMA50 (bear), then bounces with RSI momentum.',
+  minCandles: 50,
+
+  analyze(candles, symbol, interval) {
+    if (candles.length < 50) return null
+    const closes = candles.map(c => c.close)
+    const n = candles.length - 1
+
+    // Compute VWAP over available candles (cumulative TP×Vol / cumulative Vol)
+    let cumTPV = 0, cumVol = 0
+    const vwapArr: number[] = candles.map(c => {
+      const tp  = (c.high + c.low + c.close) / 3
+      const vol = c.volume ?? 1
+      cumTPV += tp * vol
+      cumVol += vol
+      return cumVol > 0 ? cumTPV / cumVol : tp
+    })
+    const vwap = vwapArr[n]
+
+    const ema9arr  = ema(closes, 9)
+    const ema21arr = ema(closes, 21)
+    const ema50arr = ema(closes, 50)
+    const rsiArr   = rsi(closes, 14)
+    const macdRes  = macd(closes)
+    const atrArr   = atr(candles, 14)
+    const stochRes = stoch(candles, 14, 3)
+    const snap     = indicatorSnapshot(candles)
+
+    const e9  = last(ema9arr)
+    const e21 = last(ema21arr)
+    const e50 = last(ema50arr)
+    const rsiVal = last(rsiArr)
+    const atrVal = last(atrArr)
+    const entry  = closes[n]
+
+    // EMA stack alignment
+    const bullStack = e9 > e21 && e21 > e50
+    const bearStack = e9 < e21 && e21 < e50
+
+    if (!bullStack && !bearStack) return null
+
+    // Price must be within 0.5 ATR of VWAP (pulled back to it)
+    const distToVWAP = Math.abs(entry - vwap)
+    const nearVWAP = distToVWAP <= atrVal * 0.5
+
+    if (!nearVWAP) return null
+
+    // Previous bar must have touched or crossed below/above VWAP then recovered
+    const prevClose = prev(closes)
+    const bullBounce = bullStack && prevClose <= vwap && entry > vwap
+    const bearBounce = bearStack && prevClose >= vwap && entry < vwap
+
+    // Alternatively: current close near VWAP with stack alignment is sufficient
+    const bullProximity = bullStack && entry >= vwap * 0.999 && entry <= vwap * 1.005
+    const bearProximity = bearStack && entry <= vwap * 1.001 && entry >= vwap * 0.995
+
+    const isBull = bullBounce || bullProximity
+    const isBear = bearBounce || bearProximity
+
+    if (!isBull && !isBear) return null
+
+    const direction = isBull ? 'LONG' : 'SHORT'
+
+    const reasons: string[] = []
+    const warnings: string[] = []
+    let score = 0
+
+    if (isBull) {
+      reasons.push(`Price bouncing at VWAP (${vwap.toFixed(2)}) with bullish EMA stack (EMA9 > EMA21 > EMA50)`)
+      score += 2
+
+      if (bullBounce) { reasons.push('Price crossed back above VWAP — bounce confirmed on bar close'); score++ }
+      else reasons.push(`Price within ${(distToVWAP / atrVal * 100).toFixed(0)}% ATR of VWAP — optimal pullback zone`)
+
+      if (rsiVal > 45 && rsiVal < 65) { reasons.push(`RSI ${rsiVal.toFixed(1)} — mid-range, trend continuation likely`); score++ }
+      else if (rsiVal < 45) warnings.push(`RSI ${rsiVal.toFixed(1)} — weak momentum at VWAP, wait for RSI recovery`)
+      else warnings.push(`RSI ${rsiVal.toFixed(1)} — elevated, pullback may not be done`)
+
+      if (last(stochRes.k) > last(stochRes.d)) { reasons.push('Stochastic turning up — momentum shift confirmed'); score++ }
+      if (last(macdRes.hist) > 0) { reasons.push('MACD histogram positive — trend continuation mode'); score++ }
+
+      const bullCandle = entry > candles[n].open
+      if (bullCandle) { reasons.push('Current bar bullish — buyers defending VWAP aggressively'); score++ }
+    } else {
+      reasons.push(`Price bouncing at VWAP (${vwap.toFixed(2)}) with bearish EMA stack (EMA9 < EMA21 < EMA50)`)
+      score += 2
+
+      if (bearBounce) { reasons.push('Price crossed back below VWAP — breakdown confirmed on bar close'); score++ }
+      else reasons.push(`Price within ${(distToVWAP / atrVal * 100).toFixed(0)}% ATR of VWAP — optimal pullback zone`)
+
+      if (rsiVal < 55 && rsiVal > 35) { reasons.push(`RSI ${rsiVal.toFixed(1)} — mid-range, trend continuation likely`); score++ }
+      else if (rsiVal > 55) warnings.push(`RSI ${rsiVal.toFixed(1)} — elevated, pullback may not be done`)
+      else warnings.push(`RSI ${rsiVal.toFixed(1)} — oversold, avoid aggressive short`)
+
+      if (last(stochRes.k) < last(stochRes.d)) { reasons.push('Stochastic turning down — momentum shift confirmed'); score++ }
+      if (last(macdRes.hist) < 0) { reasons.push('MACD histogram negative — trend continuation mode'); score++ }
+
+      const bearCandle = entry < candles[n].open
+      if (bearCandle) { reasons.push('Current bar bearish — sellers defending VWAP aggressively'); score++ }
+    }
+
+    if (score < 4) return null
+
+    const { stopLoss, target, target2, riskReward } = slTarget(direction, entry, atrVal, 1.5, 2.0)
+    const confidence = Math.min(100, Math.round((score / 8) * 100))
+
+    return {
+      strategyId: 'vwap_bounce', strategyName: 'VWAP + EMA Confluence Bounce',
+      symbol, direction, entry, stopLoss, target, target2, riskReward,
+      atrValue: atrVal, reasons, warnings, confidence,
+      confirmedAt: candles[n].time, interval,
+      indicators: snap,
+    }
+  },
+}
+
 // ── Strategy registry ─────────────────────────────────────────────────────────
 export const STRATEGIES: StrategyDef[] = [
   emaCrossStrategy,
@@ -542,6 +1039,11 @@ export const STRATEGIES: StrategyDef[] = [
   macdCrossStrategy,
   supertrendStrategy,
   bbSqueezeStrategy,
+  goldenCrossStrategy,
+  rsiDivergenceStrategy,
+  engulfingStrategy,
+  donchianBreakoutStrategy,
+  vwapBounceStrategy,
 ]
 
 export const STRATEGY_MAP = Object.fromEntries(STRATEGIES.map(s => [s.id, s]))
