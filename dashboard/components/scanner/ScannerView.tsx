@@ -185,7 +185,7 @@ export default function ScannerView() {
       }
       return sortDir === 'asc' ? av - bv : bv - av
     })
-  }, [rows, sortKey, sortDir, signalOnly])
+  }, [rows, sortKey, sortDir, signalOnly, minConf])
 
   const bullCount = rows.filter(r => r.topSignal?.direction === 'LONG').length
   const bearCount = rows.filter(r => r.topSignal?.direction === 'SHORT').length
@@ -203,7 +203,7 @@ export default function ScannerView() {
       <div style={{ padding:'8px 14px', borderBottom:'1px solid var(--os-border)', background:'var(--os-surface)', flexShrink:0 }}>
         <div style={{ display:'flex', alignItems:'center', gap:8, marginBottom:6 }}>
           <span style={{ fontSize:13, fontWeight:800, color:'var(--os-t1)' }}>MARKET SCANNER</span>
-          <span style={{ fontSize:9, color:'var(--os-t3)' }}>Real data · Yahoo Finance</span>
+          <span style={{ fontSize:9, color:'var(--os-t3)' }}>Real data · TwelveData / Yahoo Finance</span>
           {scannedAt && <span style={{ fontSize:9, color:'var(--os-t3)', marginLeft:4 }}>Last scan: {scannedAt}</span>}
           {loading && <span className="os-badge os-badge-blue" style={{ fontSize:8 }}><span style={{ display:'inline-block', animation:'os-pulse 1s ease infinite' }}>⟳</span> Scanning…</span>}
           <div style={{ marginLeft:'auto', display:'flex', gap:8, alignItems:'center' }}>
@@ -282,8 +282,19 @@ export default function ScannerView() {
         </div>
       )}
 
+      {/* Empty state after filtering */}
+      {rows.length > 0 && filtered.length === 0 && !loading && (
+        <div style={{ flex:1, display:'flex', alignItems:'center', justifyContent:'center', flexDirection:'column', gap:10 }}>
+          <div style={{ fontSize:28, opacity:.25 }}>🔍</div>
+          <div style={{ fontSize:12, color:'var(--os-t2)' }}>No instruments match the current filters</div>
+          <div style={{ fontSize:10, color:'var(--os-t3)' }}>
+            {minConf > 0 ? `Try lowering the min confidence below ${minConf}%` : 'Try removing the "Signals only" filter'}
+          </div>
+        </div>
+      )}
+
       {/* Table */}
-      {rows.length > 0 && (
+      {rows.length > 0 && filtered.length > 0 && (
         <div style={{ flex:1, overflowY:'auto' }}>
           <table className="os-table" style={{ width:'100%', minWidth:900 }}>
             <thead>
