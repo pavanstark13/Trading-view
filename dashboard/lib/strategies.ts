@@ -633,7 +633,7 @@ const rsiDivergenceStrategy: StrategyDef = {
     const n = candles.length - 1
 
     const rsiArr   = rsi(closes, 14)
-    const divResult = rsiDivergence(closes, rsiArr)
+    const divResult = rsiDivergence(candles, rsiArr)
     const ema50v   = last(ema(closes, 50))
     const ema200v  = last(ema(closes, Math.min(200, closes.length - 1)))
     const atrArr   = atr(candles, 14)
@@ -641,9 +641,12 @@ const rsiDivergenceStrategy: StrategyDef = {
     const stochRes = stoch(candles, 14, 3)
     const snap     = indicatorSnapshot(candles)
 
-    if (!divResult.bullish && !divResult.bearish) return null
+    if (!divResult) return null
+    const isBullDiv = divResult.type === 'regular_bull' || divResult.type === 'hidden_bull'
+    const isBearDiv = divResult.type === 'regular_bear' || divResult.type === 'hidden_bear'
+    if (!isBullDiv && !isBearDiv) return null
 
-    const direction = divResult.bullish ? 'LONG' : 'SHORT'
+    const direction = isBullDiv ? 'LONG' : 'SHORT'
     const entry  = closes[n]
     const atrVal = last(atrArr)
     const rsiVal = last(rsiArr)
@@ -652,8 +655,8 @@ const rsiDivergenceStrategy: StrategyDef = {
     const warnings: string[] = []
     let score = 0
 
-    if (divResult.bullish) {
-      reasons.push('Bullish RSI divergence: price lower low, RSI higher low — sellers exhausted')
+    if (isBullDiv) {
+      reasons.push(`Bullish RSI divergence (${divResult.type === 'regular_bull' ? 'regular' : 'hidden'}): price/RSI disagreement — sellers exhausted`)
       score += 2
 
       if (rsiVal < 45) { reasons.push(`RSI ${rsiVal.toFixed(1)} — still depressed, reversal room available`); score++ }
@@ -672,7 +675,7 @@ const rsiDivergenceStrategy: StrategyDef = {
       if (closes[n] > ema200v) { reasons.push('Price above EMA200 — bull market pullback, high RR'); score++ }
       else warnings.push('Price below EMA200 — counter-trend reversal, reduce position size')
     } else {
-      reasons.push('Bearish RSI divergence: price higher high, RSI lower high — buyers exhausted')
+      reasons.push(`Bearish RSI divergence (${divResult.type === 'regular_bear' ? 'regular' : 'hidden'}): price/RSI disagreement — buyers exhausted`)
       score += 2
 
       if (rsiVal > 55) { reasons.push(`RSI ${rsiVal.toFixed(1)} — still elevated, reversal room available`); score++ }
