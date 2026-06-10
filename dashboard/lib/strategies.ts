@@ -84,15 +84,16 @@ function indicatorSnapshot(candles: Candle[]) {
   const stochRes = stoch(candles, 14, 3)
   const atrArr  = atr(candles, 14)
   const atrVal  = last(atrArr)
+  const safe = (v: number) => (Number.isFinite(v) ? v : 0)
   return {
-    rsi: parseFloat(rsiVal.toFixed(2)),
-    ema9: ema9v, ema21: ema21v, ema50: ema50v, ema200: ema200v,
-    macdHist: parseFloat(last(macdRes.hist).toFixed(6)),
-    macdLine: parseFloat(last(macdRes.macd).toFixed(6)),
-    macdSignal: parseFloat(last(macdRes.signal).toFixed(6)),
-    stochK: parseFloat(last(stochRes.k).toFixed(2)),
-    stochD: parseFloat(last(stochRes.d).toFixed(2)),
-    atr: atrVal,
+    rsi: parseFloat(safe(rsiVal).toFixed(2)),
+    ema9: safe(ema9v), ema21: safe(ema21v), ema50: safe(ema50v), ema200: safe(ema200v),
+    macdHist: parseFloat(safe(last(macdRes.hist)).toFixed(6)),
+    macdLine: parseFloat(safe(last(macdRes.macd)).toFixed(6)),
+    macdSignal: parseFloat(safe(last(macdRes.signal)).toFixed(6)),
+    stochK: parseFloat(safe(last(stochRes.k)).toFixed(2)),
+    stochD: parseFloat(safe(last(stochRes.d)).toFixed(2)),
+    atr: safe(atrVal),
     n,
   }
 }
@@ -430,12 +431,17 @@ const supertrendStrategy: StrategyDef = {
 
     if (score < 3) return null
 
-    // SL = Supertrend line (its natural stop)
-    const slDist = Math.abs(entry - stLine)
-    const sl = direction === 'LONG' ? stLine : stLine
+    // SL = Supertrend line (its natural stop — below price for longs, above for shorts).
+    // Fall back to ATR-based stop if the line coincides with entry (zero risk distance).
+    let slDist = Math.abs(entry - stLine)
+    let sl = stLine
+    if (slDist <= 0) {
+      slDist = atrVal * 1.5
+      sl = direction === 'LONG' ? entry - slDist : entry + slDist
+    }
     const tp  = direction === 'LONG' ? entry + slDist * 2 : entry - slDist * 2
     const tp2 = direction === 'LONG' ? entry + slDist * 3 : entry - slDist * 3
-    const rr  = slDist > 0 ? parseFloat((slDist * 2 / slDist).toFixed(2)) : 2
+    const rr  = 2
 
     const confidence = Math.min(100, Math.round((score / 5) * 100))
 
@@ -500,7 +506,7 @@ const bbSqueezeStrategy: StrategyDef = {
 
     reasons.push(`BB width squeeze (width: ${currWidth.toFixed(4)}, near 30-bar min: ${minWidth.toFixed(4)})`)
     score++
-    reasons.push(`Band expanding (+${((currWidth / prevWidth - 1) * 100).toFixed(1)}%) — squeeze releasing`)
+    reasons.push(`Band expanding (+${(prevWidth > 0 ? (currWidth / prevWidth - 1) * 100 : 0).toFixed(1)}%) — squeeze releasing`)
     score++
 
     if (bullBreak) {
@@ -991,7 +997,7 @@ const vwapBounceStrategy: StrategyDef = {
       score += 2
 
       if (bullBounce) { reasons.push('Price crossed back above VWAP — bounce confirmed on bar close'); score++ }
-      else reasons.push(`Price within ${(distToVWAP / atrVal * 100).toFixed(0)}% ATR of VWAP — optimal pullback zone`)
+      else reasons.push(`Price within ${(atrVal > 0 ? distToVWAP / atrVal * 100 : 0).toFixed(0)}% ATR of VWAP — optimal pullback zone`)
 
       if (rsiVal > 45 && rsiVal < 65) { reasons.push(`RSI ${rsiVal.toFixed(1)} — mid-range, trend continuation likely`); score++ }
       else if (rsiVal < 45) warnings.push(`RSI ${rsiVal.toFixed(1)} — weak momentum at VWAP, wait for RSI recovery`)
@@ -1007,7 +1013,7 @@ const vwapBounceStrategy: StrategyDef = {
       score += 2
 
       if (bearBounce) { reasons.push('Price crossed back below VWAP — breakdown confirmed on bar close'); score++ }
-      else reasons.push(`Price within ${(distToVWAP / atrVal * 100).toFixed(0)}% ATR of VWAP — optimal pullback zone`)
+      else reasons.push(`Price within ${(atrVal > 0 ? distToVWAP / atrVal * 100 : 0).toFixed(0)}% ATR of VWAP — optimal pullback zone`)
 
       if (rsiVal < 55 && rsiVal > 35) { reasons.push(`RSI ${rsiVal.toFixed(1)} — mid-range, trend continuation likely`); score++ }
       else if (rsiVal > 55) warnings.push(`RSI ${rsiVal.toFixed(1)} — elevated, pullback may not be done`)

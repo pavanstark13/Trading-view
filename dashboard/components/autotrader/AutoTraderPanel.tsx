@@ -9,6 +9,7 @@ import {
   createDefaultConfig,
   createDefaultState,
   checkRiskLimits,
+  resetPeriodCounters,
   addLog,
 } from '@/lib/autotrader'
 
@@ -54,7 +55,7 @@ function loadConfig(): AutoTraderConfig {
 function loadState(config: AutoTraderConfig): AutoTraderState {
   try {
     const raw = localStorage.getItem(STATE_KEY)
-    if (raw) return { ...createDefaultState(config), ...JSON.parse(raw) }
+    if (raw) return resetPeriodCounters({ ...createDefaultState(config), ...JSON.parse(raw) })
   } catch { /* ignore */ }
   return createDefaultState(config)
 }
@@ -152,10 +153,12 @@ export default function AutoTraderPanel() {
 
   // ── scan loop ──────────────────────────────────────────────────────────────
   const runScan = useCallback(async (currentState: AutoTraderState) => {
-    setState(prev => ({ ...prev, status: 'SCANNING', lastScanAt: ts() }))
+    // Roll daily/weekly counters if the period changed since last scan
+    const freshState = resetPeriodCounters(currentState)
+    setState(prev => ({ ...resetPeriodCounters(prev), status: 'SCANNING', lastScanAt: ts() }))
     setScanning(true)
 
-    const riskCheck = checkRiskLimits(currentState)
+    const riskCheck = checkRiskLimits(freshState)
     if (!riskCheck.allowed) {
       setState(prev => addLog(
         { ...prev, status: 'BLOCKED', blockedReason: riskCheck.reason },
@@ -199,6 +202,14 @@ export default function AutoTraderPanel() {
             return addLog(
               { ...prev, status: 'BLOCKED', blockedReason: check.reason },
               logEntry('RISK_BLOCK', check.reason!)
+            )
+          }
+
+          // Paper trading + auto-approve: simulate the fill locally
+          if (prev.config.autoApprove && prev.config.broker === 'paper') {
+            return addLog(
+              { ...prev, tradesToday: prev.tradesToday + 1, openPositions: prev.openPositions + 1, status: 'ACTIVE' },
+              logEntry('FILL', `[PAPER] Simulated ${topSig.direction} ${row.symbol} @ ${row.price} (${topSig.confidence}% confidence)`)
             )
           }
 
@@ -249,8 +260,13 @@ export default function AutoTraderPanel() {
       timerRef.current = null
       setState(prev => addLog({ ...prev, running: false, status: 'IDLE' }, logEntry('INFO', 'Auto-trader stopped')))
     } else {
+      // Starting implies trading is enabled — otherwise every signal shows BLOCKED
+      const enabledCfg = { ...cfg, enabled: true }
+      setCfg(enabledCfg)
+      try { localStorage.setItem(CONFIG_KEY, JSON.stringify(enabledCfg)) } catch { /* ignore */ }
       setState(prev => {
-        const next = addLog({ ...prev, running: true, status: 'SCANNING' },
+        const next = addLog(
+          { ...resetPeriodCounters(prev), running: true, status: 'SCANNING', config: enabledCfg },
           logEntry('INFO', `Started — scanning ${ALL_INSTRUMENTS.length} instruments every 5 min`))
         runScan(next)
         return next
@@ -507,12 +523,16 @@ export default function AutoTraderPanel() {
                             {hasSig ? (
                               willTrade ? (
                                 cfg.autoApprove ? (
-                                  <span style={{ fontSize: 9, padding: '2px 7px', borderRadius: 3, background: 'rgba(0,212,143,0.15)', color: 'var(--os-green)', fontWeight: 700 }}>TRADING</span>
+                                  <span style={{ fontSize: 9, padding: '2px 7px', borderRadius: 3, background: 'rgba(0,212,143,0.15)', color: 'var(--os-green)', fontWeight: 700 }}>
+                                    {cfg.broker === 'paper' ? 'PAPER TRADE' : 'TRADING'}
+                                  </span>
                                 ) : (
                                   <span style={{ fontSize: 9, padding: '2px 7px', borderRadius: 3, background: 'rgba(77,143,255,0.15)', color: 'var(--os-blue)', fontWeight: 700 }}>QUEUED</span>
                                 )
+                              ) : !cfg.enabled ? (
+                                <span style={{ fontSize: 9, color: 'var(--os-amber)' }} title="Click START AUTO-TRADER or tick ENABLED">DISABLED</span>
                               ) : (
-                                <span style={{ fontSize: 9, color: 'var(--os-red)' }}>BLOCKED</span>
+                                <span style={{ fontSize: 9, color: 'var(--os-red)' }} title={checkRiskLimits(state).reason ?? ''}>RISK BLOCKED</span>
                               )
                             ) : (
                               <span style={{ fontSize: 9, color: 'var(--os-t3)' }}>NO SIGNAL</span>

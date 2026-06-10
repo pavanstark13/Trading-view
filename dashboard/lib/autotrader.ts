@@ -35,6 +35,9 @@ export interface AutoTraderState {
   status: 'IDLE' | 'SCANNING' | 'SIGNAL_FOUND' | 'RISK_CHECK' | 'BLOCKED' | 'PLACING_ORDER' | 'ACTIVE'
   blockedReason: string | null
   log: AutoTraderLogEntry[]
+  // Period tracking — counters reset when the day/week rolls over
+  dayKey?: string    // e.g. '2026-06-10'
+  weekKey?: string   // e.g. '2026-W24'
 }
 
 export interface AutoTraderLogEntry {
@@ -90,7 +93,46 @@ export function createDefaultState(config: AutoTraderConfig): AutoTraderState {
     status: 'IDLE',
     blockedReason: null,
     log: [],
+    dayKey: currentDayKey(),
+    weekKey: currentWeekKey(),
   }
+}
+
+export function currentDayKey(d = new Date()): string {
+  return d.toISOString().slice(0, 10)
+}
+
+export function currentWeekKey(d = new Date()): string {
+  // ISO week number
+  const date = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()))
+  const dayNum = date.getUTCDay() || 7
+  date.setUTCDate(date.getUTCDate() + 4 - dayNum)
+  const yearStart = new Date(Date.UTC(date.getUTCFullYear(), 0, 1))
+  const week = Math.ceil(((date.getTime() - yearStart.getTime()) / 86400000 + 1) / 7)
+  return `${date.getUTCFullYear()}-W${week}`
+}
+
+/**
+ * Reset daily/weekly counters when a new day/week starts.
+ * Without this, persisted tradesToday/dailyPnL block the trader forever
+ * once a limit is hit, even on the next day.
+ */
+export function resetPeriodCounters(state: AutoTraderState): AutoTraderState {
+  const dayKey  = currentDayKey()
+  const weekKey = currentWeekKey()
+  let next = state
+
+  if (state.dayKey !== dayKey) {
+    next = {
+      ...next, dayKey, dailyPnL: 0, tradesToday: 0,
+      status: next.status === 'BLOCKED' ? 'IDLE' : next.status,
+      blockedReason: null,
+    }
+  }
+  if (state.weekKey !== weekKey) {
+    next = { ...next, weekKey, weeklyPnL: 0 }
+  }
+  return next
 }
 
 export function checkRiskLimits(state: AutoTraderState): { allowed: boolean; reason: string | null } {

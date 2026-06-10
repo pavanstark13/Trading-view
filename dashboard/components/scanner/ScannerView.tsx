@@ -161,8 +161,8 @@ export default function ScannerView() {
     }
   }, [interval, exchange])
 
-  // Auto-scan on mount
-  useEffect(() => { scan() }, [])  // eslint-disable-line react-hooks/exhaustive-deps
+  // Auto-scan on mount and whenever interval/exchange changes
+  useEffect(() => { scan() }, [scan])
 
   const sort = (key: SortKey) => {
     if (sortKey === key) setSortDir(d => d === 'asc' ? 'desc' : 'asc')
